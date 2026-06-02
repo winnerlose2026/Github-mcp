@@ -46,10 +46,18 @@ Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 ## Requirements
 
 - Python 3.10+
-- A GitHub personal access token (classic or fine-grained). Scope it to only
-  the repositories and permissions you want the connector to have. For
-  read-only use, read access to the relevant repositories is enough; to use the
-  write tools the token also needs issue write access.
+- A GitHub personal access token. The connector applies **no repository
+  restrictions of its own** — it can reach exactly the repositories your token
+  can, so token scope is what controls access:
+  - **All your repositories (recommended for general use):** create a *classic*
+    PAT with the `repo` scope, or a *fine-grained* PAT whose "Repository access"
+    is set to **All repositories**. This lets the connector see every repo your
+    account can access (public and private).
+  - **Only specific repositories:** use a fine-grained PAT and select just those
+    repos under "Repository access".
+  - **Permissions:** read access is enough for the read tools; to use the write
+    tools (`create_issue`, `add_issue_comment`) the token also needs issue
+    write access (classic: `repo`; fine-grained: *Issues → Read and write*).
 
 ## Quick start (no clone, no venv)
 
@@ -192,9 +200,13 @@ fully offline and makes no network calls.
 
 ## Security notes
 
-- The connector only has the access your token grants—scope tokens narrowly.
+- The connector only has the access your token grants. A broad token (`repo`
+  scope / all repositories) gives Claude reach across every repo your account
+  can touch — convenient, but treat the token like the credential it is. Prefer
+  a fine-grained, repo-limited token if you only need a few repositories.
 - Run with `GITHUB_MCP_READ_ONLY=true` when you only need read access; this is
-  enforced server-side, before any write request is sent to GitHub.
+  enforced server-side, before any write request is sent to GitHub. This pairs
+  well with a broad-access token: full visibility, no write risk.
 - Never commit your token. `.env` is git-ignored; `.env.example` is the
   template to copy.
 
