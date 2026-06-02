@@ -51,7 +51,55 @@ Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
   read-only use, read access to the relevant repositories is enough; to use the
   write tools the token also needs issue write access.
 
-## Installation
+## Quick start (no clone, no venv)
+
+If you have [`uv`](https://docs.astral.sh/uv/) installed, `uvx` can fetch, build,
+and run the connector straight from GitHub — there's nothing to clone or install.
+Just have a `GITHUB_TOKEN` ready.
+
+**Claude Code — one command:**
+
+```bash
+claude mcp add-json github '{
+  "command": "uvx",
+  "args": ["--from", "git+https://github.com/winnerlose2026/Github-mcp.git", "github-mcp"],
+  "env": { "GITHUB_TOKEN": "github_pat_your_token_here" }
+}'
+```
+
+Add `--scope user` to make it available in every project. Verify with
+`claude mcp list` (should show `github` connected).
+
+**Claude Code — project-scoped, shareable:** this repo ships a [`.mcp.json`](.mcp.json)
+that reads `GITHUB_TOKEN` from your environment. Drop the same file in any project
+(or copy it from here), export your token, and Claude Code auto-detects it:
+
+```bash
+export GITHUB_TOKEN=github_pat_your_token_here
+claude   # prompts once to approve the project MCP server
+```
+
+**Claude Desktop:** point the `command` at `uvx` so there's no interpreter path to
+manage:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/winnerlose2026/Github-mcp.git", "github-mcp"],
+      "env": { "GITHUB_TOKEN": "github_pat_your_token_here" }
+    }
+  }
+}
+```
+
+**Prefer pipx?** `pipx run --spec git+https://github.com/winnerlose2026/Github-mcp.git github-mcp`
+works the same way; use that as the `command`/`args` instead.
+
+## Installation (from source)
+
+For development, or if you don't use `uv`/`pipx`:
 
 ```bash
 git clone https://github.com/winnerlose2026/Github-mcp.git
@@ -79,7 +127,10 @@ All configuration comes from environment variables (see [`.env.example`](.env.ex
 | `GITHUB_MCP_TIMEOUT` | no | `30` | Per-request timeout in seconds. |
 | `GITHUB_MCP_USER_AGENT` | no | `github-mcp-connector` | `User-Agent` header sent to GitHub. |
 
-## Connecting to Claude
+## Connecting to Claude (from-source install)
+
+If you installed from source (above) instead of using `uvx`/`pipx`, configure
+the client to run the package directly.
 
 ### Claude Desktop
 
