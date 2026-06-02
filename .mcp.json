@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/winnerlose2026/Github-mcp.git",
+        "github-mcp"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    }
+  }
+}

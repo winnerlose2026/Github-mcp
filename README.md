@@ -46,12 +46,68 @@ Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 ## Requirements
 
 - Python 3.10+
-- A GitHub personal access token (classic or fine-grained). Scope it to only
-  the repositories and permissions you want the connector to have. For
-  read-only use, read access to the relevant repositories is enough; to use the
-  write tools the token also needs issue write access.
+- A GitHub personal access token. The connector applies **no repository
+  restrictions of its own** — it can reach exactly the repositories your token
+  can, so token scope is what controls access:
+  - **All your repositories (recommended for general use):** create a *classic*
+    PAT with the `repo` scope, or a *fine-grained* PAT whose "Repository access"
+    is set to **All repositories**. This lets the connector see every repo your
+    account can access (public and private).
+  - **Only specific repositories:** use a fine-grained PAT and select just those
+    repos under "Repository access".
+  - **Permissions:** read access is enough for the read tools; to use the write
+    tools (`create_issue`, `add_issue_comment`) the token also needs issue
+    write access (classic: `repo`; fine-grained: *Issues → Read and write*).
 
-## Installation
+## Quick start (no clone, no venv)
+
+If you have [`uv`](https://docs.astral.sh/uv/) installed, `uvx` can fetch, build,
+and run the connector straight from GitHub — there's nothing to clone or install.
+Just have a `GITHUB_TOKEN` ready.
+
+**Claude Code — one command:**
+
+```bash
+claude mcp add-json github '{
+  "command": "uvx",
+  "args": ["--from", "git+https://github.com/winnerlose2026/Github-mcp.git", "github-mcp"],
+  "env": { "GITHUB_TOKEN": "github_pat_your_token_here" }
+}'
+```
+
+Add `--scope user` to make it available in every project. Verify with
+`claude mcp list` (should show `github` connected).
+
+**Claude Code — project-scoped, shareable:** this repo ships a [`.mcp.json`](.mcp.json)
+that reads `GITHUB_TOKEN` from your environment. Drop the same file in any project
+(or copy it from here), export your token, and Claude Code auto-detects it:
+
+```bash
+export GITHUB_TOKEN=github_pat_your_token_here
+claude   # prompts once to approve the project MCP server
+```
+
+**Claude Desktop:** point the `command` at `uvx` so there's no interpreter path to
+manage:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/winnerlose2026/Github-mcp.git", "github-mcp"],
+      "env": { "GITHUB_TOKEN": "github_pat_your_token_here" }
+    }
+  }
+}
+```
+
+**Prefer pipx?** `pipx run --spec git+https://github.com/winnerlose2026/Github-mcp.git github-mcp`
+works the same way; use that as the `command`/`args` instead.
+
+## Installation (from source)
+
+For development, or if you don't use `uv`/`pipx`:
 
 ```bash
 git clone https://github.com/winnerlose2026/Github-mcp.git
@@ -79,7 +135,10 @@ All configuration comes from environment variables (see [`.env.example`](.env.ex
 | `GITHUB_MCP_TIMEOUT` | no | `30` | Per-request timeout in seconds. |
 | `GITHUB_MCP_USER_AGENT` | no | `github-mcp-connector` | `User-Agent` header sent to GitHub. |
 
-## Connecting to Claude
+## Connecting to Claude (from-source install)
+
+If you installed from source (above) instead of using `uvx`/`pipx`, configure
+the client to run the package directly.
 
 ### Claude Desktop
 
@@ -141,9 +200,13 @@ fully offline and makes no network calls.
 
 ## Security notes
 
-- The connector only has the access your token grants—scope tokens narrowly.
+- The connector only has the access your token grants. A broad token (`repo`
+  scope / all repositories) gives Claude reach across every repo your account
+  can touch — convenient, but treat the token like the credential it is. Prefer
+  a fine-grained, repo-limited token if you only need a few repositories.
 - Run with `GITHUB_MCP_READ_ONLY=true` when you only need read access; this is
-  enforced server-side, before any write request is sent to GitHub.
+  enforced server-side, before any write request is sent to GitHub. This pairs
+  well with a broad-access token: full visibility, no write risk.
 - Never commit your token. `.env` is git-ignored; `.env.example` is the
   template to copy.
 
