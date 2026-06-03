@@ -494,3 +494,91 @@ async def test_merge_pull_request_surfaces_conflict(monkeypatch):
     with pytest.raises(GitHubError) as exc:
         await server.merge_pull_request("o", "r", 5)
     assert exc.value.status_code == 405
+
+
+async def test_list_workflow_run_jobs_flags_failed_steps(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/actions/runs/99/jobs"
+        return httpx.Response(
+            200,
+            json={"jobs": [{
+                "id": 5, "name": "Test", "status": "completed",
+                "conclusion": "failure",
+                "steps": [
+                    {"name": "setup", "conclusion": "success"},
+                    {"name": "pytest", "conclusion": "failure"},
+                ],
+            }]},
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_workflow_run_jobs("o", "r", 99)
+    assert result[0]["conclusion"] == "failure"
+    assert result[0]["failed_steps"] == ["pytest"]
+
+
+async def test_get_job_logs_tails(monkeypatch):
+    log = "line\n" * 100  # 500 chars
+
+    def handler(request):
+        assert request.url.path == "/repos/o/r/actions/jobs/5/logs"
+        return httpx.Response(200, text=log)
+
+    install_mock(monkeypatch, handler)
+    result = await server.get_job_logs("o", "r", 5, max_chars=20, tail=True)
+    assert result["truncated"] is True
+    assert len(result["logs"]) == 20
+    assert result["logs"] == log[-20:]
+
+
+async def test_list_pull_request_reviews(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/pulls/3/reviews"
+        return httpx.Response(
+            200,
+            json=[{"id": 1, "user": {"login": "jd"}, "state": "APPROVED",
+                   "body": "lgtm"}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_pull_request_reviews("o", "r", 3)
+    assert result[0]["state"] == "APPROVED"
+    assert result[0]["user"] == "jd"
+
+
+async def test_list_secret_scanning_alerts_omits_secret(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/secret-scanning/alerts"
+        return httpx.Response(
+            200,
+            json=[{"number": 1, "state": "open", "secret_type": "github_pat",
+                   "secret": "ghp_SHOULD_NOT_LEAK", "html_url": "u"}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_secret_scanning_alerts("o", "r")
+    assert result[0]["secret_type"] == "github_pat"
+    assert "secret" not in result[0]
+    assert "ghp_SHOULD_NOT_LEAK" not in str(result[0])
+
+
+async def test_rerun_workflow_run_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(201), read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.rerun_workflow_run("o", "r", 99)
+    assert exc.value.status_code == 403
+
+
+async def test_rerun_workflow_run_failed_only_endpoint(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        return httpx.Response(201, json={})
+
+    install_mock(monkeypatch, handler)
+    result = await server.rerun_workflow_run("o", "r", 99, failed_only=True)
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/repos/o/r/actions/runs/99/rerun-failed-jobs"
+    assert result == {"rerun": True, "run_id": 99, "failed_only": True}

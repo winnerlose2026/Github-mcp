@@ -18,7 +18,8 @@ Enterprise Server.
 - 🧾 **Commits** — history, single-commit detail, and diffs between refs
 - 🐛 **Issues** — list, read, create, comment, and edit/close
 - 🔀 **Pull requests** — list, read, fetch diffs/changed files, open new PRs, and merge
-- ⚙️ **Actions & releases** — list workflow runs and releases
+- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run runs, list releases
+- 🔐 **Security** — list secret-scanning alerts; review PR reviews
 - ✍️ **Repo writes** — create branches and commit files (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
 - 🏢 **Enterprise-friendly** — set `GITHUB_API_URL` for GitHub Enterprise Server
@@ -42,12 +43,17 @@ Enterprise Server.
 | `get_pull_request` | A single PR with body and merge status | |
 | `get_pull_request_diff` | Unified diff for a PR (truncated) | |
 | `list_pull_request_files` | Files changed in a PR | |
+| `list_pull_request_reviews` | Reviews submitted on a PR | |
 | `list_workflow_runs` | Recent GitHub Actions runs | |
+| `list_workflow_run_jobs` | Jobs in a run (flags failed steps) | |
+| `get_job_logs` | Plain-text logs for a job (tail) | |
 | `list_releases` | Releases for a repository | |
+| `list_secret_scanning_alerts` | Secret-scanning alerts (no secret values) | |
 | `search_issues` | Search issues and PRs across GitHub | |
 | `search_code` | Search code across GitHub | |
 | `create_pull_request` | Open a new pull request (supports draft) | ✅ |
 | `merge_pull_request` | Merge a PR (merge/squash/rebase) | ✅ |
+| `rerun_workflow_run` | Re-run a workflow run (or just failed jobs) | ✅ |
 | `create_issue` | Open a new issue | ✅ |
 | `update_issue` | Edit/close/reopen an issue | ✅ |
 | `add_issue_comment` | Comment on an issue or PR | ✅ |
