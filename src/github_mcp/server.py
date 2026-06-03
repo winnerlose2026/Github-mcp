@@ -165,6 +165,47 @@ def _summarize_release(release: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _summarize_job(job: dict[str, Any]) -> dict[str, Any]:
+    steps = job.get("steps") or []
+    failed_steps = [
+        s.get("name") for s in steps if s.get("conclusion") == "failure"
+    ]
+    return {
+        "id": job.get("id"),
+        "name": job.get("name"),
+        "status": job.get("status"),
+        "conclusion": job.get("conclusion"),
+        "failed_steps": failed_steps,
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "html_url": job.get("html_url"),
+    }
+
+
+def _summarize_review(review: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": review.get("id"),
+        "user": (review.get("user") or {}).get("login"),
+        "state": review.get("state"),
+        "body": review.get("body"),
+        "submitted_at": review.get("submitted_at"),
+        "html_url": review.get("html_url"),
+    }
+
+
+def _summarize_secret_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    # Deliberately omit the raw `secret` value GitHub may include.
+    return {
+        "number": alert.get("number"),
+        "state": alert.get("state"),
+        "secret_type": alert.get("secret_type"),
+        "secret_type_display_name": alert.get("secret_type_display_name"),
+        "resolution": alert.get("resolution"),
+        "created_at": alert.get("created_at"),
+        "html_url": alert.get("html_url"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # read tools
 # ---------------------------------------------------------------------------
@@ -566,6 +607,89 @@ async def list_releases(
     return [_summarize_release(r) for r in releases]
 
 
+@mcp.tool()
+async def list_workflow_run_jobs(
+    owner: str, repo: str, run_id: int, filter: str = "latest", limit: int = 30
+) -> list[dict[str, Any]]:
+    """List the jobs of a GitHub Actions workflow run.
+
+    Use this to see which job(s) in a run failed (check `conclusion` and
+    `failed_steps`) and to get each job's `id` for `get_job_logs`. `filter` is
+    `latest` (default) or `all` (include earlier attempts). Returns up to `limit`
+    (max 100) jobs.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        result = await gh.get(
+            f"/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
+            params={"filter": filter, "per_page": limit},
+        )
+    return [_summarize_job(j) for j in result.get("jobs", [])]
+
+
+@mcp.tool()
+async def get_job_logs(
+    owner: str, repo: str, job_id: int, max_chars: int = 20000, tail: bool = True
+) -> dict[str, Any]:
+    """Get the plain-text logs for a single GitHub Actions job.
+
+    Get `job_id` from `list_workflow_run_jobs`. Logs are truncated to
+    `max_chars`; with `tail=True` (default) the END of the log is returned
+    (where failures usually are), otherwise the beginning. `truncated` indicates
+    whether anything was cut.
+    """
+    _require_token()
+    async with GitHubClient(config) as gh:
+        text = await gh.get_raw(
+            f"/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
+            accept="application/vnd.github+json",
+        )
+    truncated = len(text) > max_chars
+    clipped = (text[-max_chars:] if tail else text[:max_chars]) if truncated else text
+    return {"job_id": job_id, "truncated": truncated, "tail": tail, "logs": clipped}
+
+
+@mcp.tool()
+async def list_pull_request_reviews(
+    owner: str, repo: str, pull_number: int, limit: int = 30
+) -> list[dict[str, Any]]:
+    """List the reviews submitted on a pull request.
+
+    Returns each review's author, `state` (e.g. `APPROVED`, `CHANGES_REQUESTED`,
+    `COMMENTED`, `DISMISSED`), and body. Returns up to `limit` (max 100) reviews.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        reviews = await gh.get(
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+            params={"per_page": limit},
+        )
+    return [_summarize_review(r) for r in reviews]
+
+
+@mcp.tool()
+async def list_secret_scanning_alerts(
+    owner: str, repo: str, state: str = "open", limit: int = 30
+) -> list[dict[str, Any]]:
+    """List secret-scanning alerts for a repository (the Security tab).
+
+    `state` is `open` (default), `resolved`, or `all`. The raw secret value is
+    never returned — only the type, state, and resolution. Requires a token with
+    access to security alerts (repo admin / `security_events`); GitHub returns
+    403/404 otherwise. Returns up to `limit` (max 100) alerts.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        alerts = await gh.get(
+            f"/repos/{owner}/{repo}/secret-scanning/alerts",
+            params={"state": state, "per_page": limit},
+        )
+    return [_summarize_secret_alert(a) for a in alerts]
+
+
 # ---------------------------------------------------------------------------
 # write tools (disabled in read-only mode)
 # ---------------------------------------------------------------------------
@@ -833,6 +957,26 @@ async def merge_pull_request(
         "sha": result.get("sha"),
         "message": result.get("message"),
     }
+
+
+@mcp.tool()
+async def rerun_workflow_run(
+    owner: str, repo: str, run_id: int, failed_only: bool = False
+) -> dict[str, Any]:
+    """Re-run a GitHub Actions workflow run.
+
+    With `failed_only=True`, only the failed jobs are re-run; otherwise the whole
+    run is re-run. Get `run_id` from `list_workflow_runs`. Disabled in read-only
+    mode; requires a token with write access.
+    """
+    _require_token()
+    _require_write()
+    endpoint = "rerun-failed-jobs" if failed_only else "rerun"
+    async with GitHubClient(config) as gh:
+        await gh.post(
+            f"/repos/{owner}/{repo}/actions/runs/{run_id}/{endpoint}", json={}
+        )
+    return {"rerun": True, "run_id": run_id, "failed_only": failed_only}
 
 
 def main(argv: list[str] | None = None) -> None:
