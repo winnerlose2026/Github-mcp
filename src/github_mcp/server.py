@@ -800,6 +800,41 @@ async def create_pull_request(
     return summary
 
 
+@mcp.tool()
+async def merge_pull_request(
+    owner: str,
+    repo: str,
+    pull_number: int,
+    merge_method: str = "merge",
+    commit_title: str | None = None,
+    commit_message: str | None = None,
+) -> dict[str, Any]:
+    """Merge a pull request.
+
+    `merge_method` is one of `merge` (merge commit), `squash`, or `rebase`.
+    `commit_title`/`commit_message` optionally override the merge commit text
+    (ignored for `rebase`). Fails if the PR isn't mergeable (conflicts, failing
+    required checks, or branch protection). Disabled in read-only mode; requires
+    a token with write access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {"merge_method": merge_method}
+    if commit_title is not None:
+        payload["commit_title"] = commit_title
+    if commit_message is not None:
+        payload["commit_message"] = commit_message
+    async with GitHubClient(config) as gh:
+        result = await gh.put(
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/merge", json=payload
+        )
+    return {
+        "merged": result.get("merged"),
+        "sha": result.get("sha"),
+        "message": result.get("message"),
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     """Console entry point. Selects the transport from CLI args/env."""
     import argparse

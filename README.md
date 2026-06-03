@@ -17,7 +17,7 @@ Enterprise Server.
 - 📦 **Repositories** — metadata, branches, file contents, directory listings, your repo list
 - 🧾 **Commits** — history, single-commit detail, and diffs between refs
 - 🐛 **Issues** — list, read, create, comment, and edit/close
-- 🔀 **Pull requests** — list, read, fetch diffs/changed files, and open new PRs
+- 🔀 **Pull requests** — list, read, fetch diffs/changed files, open new PRs, and merge
 - ⚙️ **Actions & releases** — list workflow runs and releases
 - ✍️ **Repo writes** — create branches and commit files (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
@@ -47,6 +47,7 @@ Enterprise Server.
 | `search_issues` | Search issues and PRs across GitHub | |
 | `search_code` | Search code across GitHub | |
 | `create_pull_request` | Open a new pull request (supports draft) | ✅ |
+| `merge_pull_request` | Merge a PR (merge/squash/rebase) | ✅ |
 | `create_issue` | Open a new issue | ✅ |
 | `update_issue` | Edit/close/reopen an issue | ✅ |
 | `add_issue_comment` | Comment on an issue or PR | ✅ |
