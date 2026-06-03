@@ -124,6 +124,18 @@ class GitHubClient:
             return None
         return response.json()
 
+    async def put(self, path: str, *, json: dict[str, Any]) -> Any:
+        response = await self._request("PUT", path, json=json)
+        if not response.content:
+            return None
+        return response.json()
+
+    async def patch(self, path: str, *, json: dict[str, Any]) -> Any:
+        response = await self._request("PATCH", path, json=json)
+        if not response.content:
+            return None
+        return response.json()
+
 
 def _extract_error_detail(response: httpx.Response) -> str:
     """Pull the most useful human-readable error message out of a response."""

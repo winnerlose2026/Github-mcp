@@ -126,6 +126,45 @@ def _summarize_commit(commit: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _summarize_file(file: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "filename": file.get("filename"),
+        "status": file.get("status"),
+        "additions": file.get("additions"),
+        "deletions": file.get("deletions"),
+        "changes": file.get("changes"),
+        "previous_filename": file.get("previous_filename"),
+    }
+
+
+def _summarize_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": run.get("id"),
+        "name": run.get("name"),
+        "display_title": run.get("display_title"),
+        "event": run.get("event"),
+        "status": run.get("status"),
+        "conclusion": run.get("conclusion"),
+        "head_branch": run.get("head_branch"),
+        "head_sha": run.get("head_sha"),
+        "run_number": run.get("run_number"),
+        "created_at": run.get("created_at"),
+        "html_url": run.get("html_url"),
+    }
+
+
+def _summarize_release(release: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "tag_name": release.get("tag_name"),
+        "name": release.get("name"),
+        "draft": release.get("draft"),
+        "prerelease": release.get("prerelease"),
+        "published_at": release.get("published_at"),
+        "author": (release.get("author") or {}).get("login"),
+        "html_url": release.get("html_url"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # read tools
 # ---------------------------------------------------------------------------
@@ -403,6 +442,130 @@ async def search_code(query: str, limit: int = 10) -> list[dict[str, Any]]:
     ]
 
 
+@mcp.tool()
+async def list_my_repositories(
+    affiliation: str = "owner,collaborator,organization_member",
+    sort: str = "updated",
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """List repositories the authenticated user has access to.
+
+    `affiliation` is a comma-separated subset of `owner`, `collaborator`,
+    `organization_member`. `sort` is one of `created`, `updated`, `pushed`,
+    `full_name`. Returns up to `limit` (max 100) repositories. Use this to
+    discover repos the token can reach without knowing their names.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        repos = await gh.get(
+            "/user/repos",
+            params={"affiliation": affiliation, "sort": sort, "per_page": limit},
+        )
+    return [_summarize_repo(repo) for repo in repos]
+
+
+@mcp.tool()
+async def get_commit(owner: str, repo: str, ref: str) -> dict[str, Any]:
+    """Get a single commit with its stats and changed files.
+
+    `ref` is a commit SHA, branch, or tag. Returns the commit metadata plus
+    aggregate additions/deletions and a per-file summary (no patch text).
+    """
+    _require_token()
+    async with GitHubClient(config) as gh:
+        commit = await gh.get(f"/repos/{owner}/{repo}/commits/{ref}")
+    summary = _summarize_commit(commit)
+    summary["stats"] = commit.get("stats")
+    summary["files"] = [_summarize_file(f) for f in commit.get("files", [])]
+    return summary
+
+
+@mcp.tool()
+async def compare_commits(
+    owner: str, repo: str, base: str, head: str
+) -> dict[str, Any]:
+    """Compare two commits, branches, or tags.
+
+    Returns how `head` relates to `base` (`ahead_by`/`behind_by`), the commits
+    in between, and the files changed. Useful for "what's on this branch that
+    isn't on main" or reviewing a range.
+    """
+    _require_token()
+    async with GitHubClient(config) as gh:
+        result = await gh.get(f"/repos/{owner}/{repo}/compare/{base}...{head}")
+    return {
+        "status": result.get("status"),
+        "ahead_by": result.get("ahead_by"),
+        "behind_by": result.get("behind_by"),
+        "total_commits": result.get("total_commits"),
+        "commits": [_summarize_commit(c) for c in result.get("commits", [])],
+        "files": [_summarize_file(f) for f in result.get("files", [])],
+        "html_url": result.get("html_url"),
+    }
+
+
+@mcp.tool()
+async def list_pull_request_files(
+    owner: str, repo: str, pull_number: int, limit: int = 50
+) -> list[dict[str, Any]]:
+    """List the files changed in a pull request.
+
+    Returns each file's path, status (added/modified/removed/renamed), and
+    line counts. Returns up to `limit` (max 100) files.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        files = await gh.get(
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/files",
+            params={"per_page": limit},
+        )
+    return [_summarize_file(f) for f in files]
+
+
+@mcp.tool()
+async def list_workflow_runs(
+    owner: str,
+    repo: str,
+    branch: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """List recent GitHub Actions workflow runs for a repository.
+
+    Optionally filter by `branch` or by `status` (e.g. `completed`,
+    `in_progress`, `queued`, `failure`, `success`). Returns up to `limit`
+    (max 50) runs, newest first.
+    """
+    _require_token()
+    limit = max(1, min(limit, 50))
+    async with GitHubClient(config) as gh:
+        result = await gh.get(
+            f"/repos/{owner}/{repo}/actions/runs",
+            params={"branch": branch, "status": status, "per_page": limit},
+        )
+    return [_summarize_workflow_run(run) for run in result.get("workflow_runs", [])]
+
+
+@mcp.tool()
+async def list_releases(
+    owner: str, repo: str, limit: int = 20
+) -> list[dict[str, Any]]:
+    """List releases for a repository, newest first.
+
+    Returns up to `limit` (max 50) releases with tag, name, draft/prerelease
+    flags, and publish date.
+    """
+    _require_token()
+    limit = max(1, min(limit, 50))
+    async with GitHubClient(config) as gh:
+        releases = await gh.get(
+            f"/repos/{owner}/{repo}/releases", params={"per_page": limit}
+        )
+    return [_summarize_release(r) for r in releases]
+
+
 # ---------------------------------------------------------------------------
 # write tools (disabled in read-only mode)
 # ---------------------------------------------------------------------------
@@ -456,6 +619,132 @@ async def add_issue_comment(
         "user": (comment.get("user") or {}).get("login"),
         "html_url": comment.get("html_url"),
         "created_at": comment.get("created_at"),
+    }
+
+
+@mcp.tool()
+async def update_issue(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    title: str | None = None,
+    body: str | None = None,
+    state: str | None = None,
+    labels: list[str] | None = None,
+) -> dict[str, Any]:
+    """Edit an existing issue: change its title, body, labels, or state.
+
+    Pass `state` as `closed` to close an issue or `open` to reopen it. Only the
+    fields you provide are changed. Disabled in read-only mode; requires a token
+    with write access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {}
+    if title is not None:
+        payload["title"] = title
+    if body is not None:
+        payload["body"] = body
+    if state is not None:
+        payload["state"] = state
+    if labels is not None:
+        payload["labels"] = labels
+    if not payload:
+        raise GitHubError(
+            400,
+            "PATCH",
+            f"/repos/{owner}/{repo}/issues/{issue_number}",
+            "Nothing to update: provide at least one of title, body, state, labels.",
+        )
+    async with GitHubClient(config) as gh:
+        issue = await gh.patch(
+            f"/repos/{owner}/{repo}/issues/{issue_number}", json=payload
+        )
+    summary = _summarize_issue(issue)
+    summary["body"] = issue.get("body")
+    return summary
+
+
+@mcp.tool()
+async def create_branch(
+    owner: str, repo: str, branch: str, from_ref: str | None = None
+) -> dict[str, Any]:
+    """Create a new branch in a repository.
+
+    The branch starts at `from_ref` (a branch, tag, or commit SHA); if omitted,
+    it starts at the repository's default branch. Disabled in read-only mode;
+    requires a token with write access.
+    """
+    _require_token()
+    _require_write()
+    async with GitHubClient(config) as gh:
+        if from_ref is None:
+            repo_data = await gh.get(f"/repos/{owner}/{repo}")
+            from_ref = repo_data.get("default_branch")
+        # Resolve the starting ref to a concrete commit SHA.
+        base = await gh.get(f"/repos/{owner}/{repo}/commits/{from_ref}")
+        sha = base.get("sha")
+        ref = await gh.post(
+            f"/repos/{owner}/{repo}/git/refs",
+            json={"ref": f"refs/heads/{branch}", "sha": sha},
+        )
+    return {
+        "ref": ref.get("ref"),
+        "sha": (ref.get("object") or {}).get("sha", sha),
+        "from_ref": from_ref,
+    }
+
+
+@mcp.tool()
+async def create_or_update_file(
+    owner: str,
+    repo: str,
+    path: str,
+    content: str,
+    message: str,
+    branch: str | None = None,
+    sha: str | None = None,
+) -> dict[str, Any]:
+    """Create a new file or update an existing one (a single commit).
+
+    `content` is the file's text (UTF-8). `message` is the commit message.
+    `branch` defaults to the repository's default branch. When updating an
+    existing file you must pass its blob `sha`; if you don't, this tool looks it
+    up automatically for the target branch. Disabled in read-only mode; requires
+    a token with write access.
+    """
+    _require_token()
+    _require_write()
+    encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    payload: dict[str, Any] = {"message": message, "content": encoded}
+    if branch is not None:
+        payload["branch"] = branch
+    async with GitHubClient(config) as gh:
+        if sha is None:
+            # If the file already exists, GitHub requires its current blob sha.
+            try:
+                existing = await gh.get(
+                    f"/repos/{owner}/{repo}/contents/{path}",
+                    params={"ref": branch},
+                )
+                if isinstance(existing, dict):
+                    sha = existing.get("sha")
+            except GitHubError as exc:
+                if exc.status_code != 404:
+                    raise  # a real error; only 404 (new file) is expected
+        if sha is not None:
+            payload["sha"] = sha
+        result = await gh.put(
+            f"/repos/{owner}/{repo}/contents/{path}", json=payload
+        )
+    commit = result.get("commit", {})
+    content_info = result.get("content", {})
+    return {
+        "path": content_info.get("path", path),
+        "sha": content_info.get("sha"),
+        "commit_sha": commit.get("sha"),
+        "html_url": content_info.get("html_url"),
+        "created": sha is None,
     }
 
 

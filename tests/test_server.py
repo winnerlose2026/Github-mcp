@@ -163,3 +163,219 @@ async def test_create_issue_posts_payload(monkeypatch):
     )
     assert captured["body"] == {"title": "title", "body": "desc", "labels": ["bug"]}
     assert result["number"] == 7
+
+
+# --- additional tools -------------------------------------------------------
+
+
+async def test_list_my_repositories(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        assert request.url.path == "/user/repos"
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200, json=[{"full_name": "jd/a", "stargazers_count": 1}]
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_my_repositories(sort="pushed", limit=5)
+    assert result[0]["full_name"] == "jd/a"
+    assert captured["params"]["sort"] == "pushed"
+    assert captured["params"]["per_page"] == "5"
+
+
+async def test_get_commit_includes_files_and_stats(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/commits/abc123"
+        return httpx.Response(
+            200,
+            json={
+                "sha": "abc123",
+                "commit": {"message": "fix", "author": {"name": "JD"}},
+                "stats": {"total": 3, "additions": 2, "deletions": 1},
+                "files": [
+                    {"filename": "a.py", "status": "modified", "additions": 2,
+                     "deletions": 1, "changes": 3}
+                ],
+            },
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.get_commit("o", "r", "abc123")
+    assert result["sha"] == "abc123"
+    assert result["stats"]["total"] == 3
+    assert result["files"][0]["filename"] == "a.py"
+
+
+async def test_compare_commits(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/compare/main...feature"
+        return httpx.Response(
+            200,
+            json={
+                "status": "ahead",
+                "ahead_by": 2,
+                "behind_by": 0,
+                "total_commits": 2,
+                "commits": [{"sha": "1", "commit": {"message": "m"}}],
+                "files": [{"filename": "x", "status": "added"}],
+            },
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.compare_commits("o", "r", "main", "feature")
+    assert result["ahead_by"] == 2
+    assert len(result["commits"]) == 1
+    assert result["files"][0]["filename"] == "x"
+
+
+async def test_list_workflow_runs_filters(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        assert request.url.path == "/repos/o/r/actions/runs"
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={"workflow_runs": [
+                {"id": 9, "name": "CI", "status": "completed",
+                 "conclusion": "success"}
+            ]},
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_workflow_runs("o", "r", branch="main",
+                                             status="completed")
+    assert result[0]["conclusion"] == "success"
+    assert captured["params"]["branch"] == "main"
+    assert captured["params"]["status"] == "completed"
+
+
+async def test_list_releases(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/releases"
+        return httpx.Response(
+            200, json=[{"tag_name": "v1.0.0", "name": "v1", "draft": False}]
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_releases("o", "r")
+    assert result[0]["tag_name"] == "v1.0.0"
+
+
+async def test_update_issue_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.update_issue("o", "r", 1, state="closed")
+    assert exc.value.status_code == 403
+
+
+async def test_update_issue_requires_a_field(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(GitHubError) as exc:
+        await server.update_issue("o", "r", 1)
+    assert exc.value.status_code == 400
+
+
+async def test_update_issue_patches(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.method == "PATCH"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"number": 1, "state": "closed", "title": "t"}
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.update_issue("o", "r", 1, state="closed")
+    assert captured["body"] == {"state": "closed"}
+    assert result["state"] == "closed"
+
+
+async def test_create_branch_resolves_sha_and_posts(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        if request.method == "GET" and request.url.path == "/repos/o/r/commits/main":
+            return httpx.Response(200, json={"sha": "deadbeef"})
+        if request.method == "POST" and request.url.path == "/repos/o/r/git/refs":
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                201,
+                json={"ref": "refs/heads/feature",
+                      "object": {"sha": "deadbeef"}},
+            )
+        raise AssertionError(f"unexpected {request.method} {request.url.path}")
+
+    install_mock(monkeypatch, handler)
+    result = await server.create_branch("o", "r", "feature", from_ref="main")
+    assert captured["body"] == {"ref": "refs/heads/feature", "sha": "deadbeef"}
+    assert result["ref"] == "refs/heads/feature"
+    assert result["sha"] == "deadbeef"
+
+
+async def test_create_branch_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.create_branch("o", "r", "feature", from_ref="main")
+    assert exc.value.status_code == 403
+
+
+async def test_create_or_update_file_updates_existing(monkeypatch):
+    import base64
+    captured = {}
+
+    def handler(request):
+        import json
+        path = "/repos/o/r/contents/notes.md"
+        if request.method == "GET" and request.url.path == path:
+            # existing file -> returns its blob sha
+            return httpx.Response(200, json={"sha": "oldsha", "path": "notes.md"})
+        if request.method == "PUT" and request.url.path == path:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={"content": {"path": "notes.md", "sha": "newsha"},
+                      "commit": {"sha": "commitsha"}},
+            )
+        raise AssertionError(f"unexpected {request.method} {request.url.path}")
+
+    install_mock(monkeypatch, handler)
+    result = await server.create_or_update_file(
+        "o", "r", "notes.md", "hello", "msg", branch="main"
+    )
+    # content base64-encoded, and the existing sha auto-looked-up
+    assert base64.b64decode(captured["body"]["content"]).decode() == "hello"
+    assert captured["body"]["sha"] == "oldsha"
+    assert captured["body"]["branch"] == "main"
+    assert result["commit_sha"] == "commitsha"
+    assert result["created"] is False
+
+
+async def test_create_or_update_file_creates_new_on_404(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        path = "/repos/o/r/contents/new.md"
+        if request.method == "GET" and request.url.path == path:
+            return httpx.Response(404, json={"message": "Not Found"})
+        if request.method == "PUT" and request.url.path == path:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                201,
+                json={"content": {"path": "new.md", "sha": "s"},
+                      "commit": {"sha": "c"}},
+            )
+        raise AssertionError(f"unexpected {request.method} {request.url.path}")
+
+    install_mock(monkeypatch, handler)
+    result = await server.create_or_update_file("o", "r", "new.md", "x", "add")
+    assert "sha" not in captured["body"]  # no sha -> create
+    assert result["created"] is True
