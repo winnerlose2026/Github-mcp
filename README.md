@@ -14,10 +14,12 @@ Enterprise Server.
 ## Features
 
 - 🔍 **Search** repositories, issues/PRs, and code with GitHub's query syntax
-- 📦 **Repositories** — metadata, branches, file contents, directory listings
-- 🧾 **Commits** — recent history, optionally filtered to a branch or file path
-- 🐛 **Issues** — list, read, and (optionally) create issues and comments
-- 🔀 **Pull requests** — list, read, and fetch unified diffs
+- 📦 **Repositories** — metadata, branches, file contents, directory listings, your repo list
+- 🧾 **Commits** — history, single-commit detail, and diffs between refs
+- 🐛 **Issues** — list, read, create, comment, and edit/close
+- 🔀 **Pull requests** — list, read, fetch diffs and changed files
+- ⚙️ **Actions & releases** — list workflow runs and releases
+- ✍️ **Repo writes** — create branches and commit files (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
 - 🏢 **Enterprise-friendly** — set `GITHUB_API_URL` for GitHub Enterprise Server
 
@@ -26,20 +28,29 @@ Enterprise Server.
 | Tool | Description | Write |
 |------|-------------|:-----:|
 | `get_authenticated_user` | Identity/health check for the configured token | |
+| `list_my_repositories` | List repos the token can access | |
 | `search_repositories` | Search repositories by query | |
 | `get_repository` | Repository metadata | |
 | `list_branches` | Branches with head commit SHAs | |
 | `get_file_contents` | Read a file (decoded) or list a directory | |
 | `list_commits` | Recent commits, optional branch/path filter | |
+| `get_commit` | A single commit with stats and changed files | |
+| `compare_commits` | Diff/ahead-behind between two refs | |
 | `list_issues` | Issues by state/labels | |
 | `get_issue` | A single issue with full body | |
 | `list_pull_requests` | Pull requests by state | |
 | `get_pull_request` | A single PR with body and merge status | |
 | `get_pull_request_diff` | Unified diff for a PR (truncated) | |
+| `list_pull_request_files` | Files changed in a PR | |
+| `list_workflow_runs` | Recent GitHub Actions runs | |
+| `list_releases` | Releases for a repository | |
 | `search_issues` | Search issues and PRs across GitHub | |
 | `search_code` | Search code across GitHub | |
 | `create_issue` | Open a new issue | ✅ |
+| `update_issue` | Edit/close/reopen an issue | ✅ |
 | `add_issue_comment` | Comment on an issue or PR | ✅ |
+| `create_branch` | Create a branch from a ref | ✅ |
+| `create_or_update_file` | Commit a file (create or update) | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 
