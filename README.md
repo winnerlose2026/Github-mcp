@@ -224,10 +224,10 @@ GITHUB_TOKEN=ghp_your_token_here python -m github_mcp --http
 
 Once connected, you can ask Claude things like:
 
-- "What's the open PR backlog on `winnerlose2026/inventory-tracker`?"
-- "Read `render.yaml` from the default branch and explain the cron jobs."
+- "What's the open PR backlog on `owner/repo`?"
+- "Read `README.md` from the default branch of `owner/repo` and summarize it."
 - "Show me the diff for PR #42 and summarize the risky parts."
-- "Open an issue titled 'Flaky USF report parse' with these reproduction steps…"
+- "Open an issue titled 'Flaky test in CI' with these reproduction steps…"
 
 ## Development
 
