@@ -696,6 +696,22 @@ async def create_branch(
 
 
 @mcp.tool()
+async def delete_branch(owner: str, repo: str, branch: str) -> dict[str, Any]:
+    """Delete a branch from a repository.
+
+    `branch` is the branch name (e.g. `feature-x`, not `refs/heads/feature-x`).
+    This permanently removes the ref; it cannot delete the repository's default
+    branch (GitHub rejects that). Disabled in read-only mode; requires a token
+    with write access.
+    """
+    _require_token()
+    _require_write()
+    async with GitHubClient(config) as gh:
+        await gh.delete(f"/repos/{owner}/{repo}/git/refs/heads/{branch}")
+    return {"deleted": True, "branch": branch}
+
+
+@mcp.tool()
 async def create_or_update_file(
     owner: str,
     repo: str,

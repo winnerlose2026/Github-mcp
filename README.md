@@ -50,6 +50,7 @@ Enterprise Server.
 | `update_issue` | Edit/close/reopen an issue | ✅ |
 | `add_issue_comment` | Comment on an issue or PR | ✅ |
 | `create_branch` | Create a branch from a ref | ✅ |
+| `delete_branch` | Delete a branch | ✅ |
 | `create_or_update_file` | Commit a file (create or update) | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
