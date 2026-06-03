@@ -59,11 +59,52 @@ Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
     tools (`create_issue`, `add_issue_comment`) the token also needs issue
     write access (classic: `repo`; fine-grained: *Issues → Read and write*).
 
+## Install from PyPI (recommended)
+
+The connector is published to PyPI as
+[`github-mcp-connector`](https://pypi.org/project/github-mcp-connector/), so you
+can install or run it by name — no clone, no git, no build step. This is the
+most reliable option on Windows, where launching from a git URL requires Git on
+the spawned process's `PATH`.
+
+```bash
+uvx github-mcp-connector            # run on demand with uv (nothing to install)
+pipx run github-mcp-connector       # same, with pipx
+pip install github-mcp-connector    # or install it permanently
+```
+
+Wire it into Claude by pointing the command at the published package:
+
+**Claude Code:**
+```bash
+claude mcp add-json github '{
+  "command": "uvx",
+  "args": ["github-mcp-connector"],
+  "env": { "GITHUB_TOKEN": "github_pat_your_token_here" }
+}'
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "uvx",
+      "args": ["github-mcp-connector"],
+      "env": { "GITHUB_TOKEN": "github_pat_your_token_here" }
+    }
+  }
+}
+```
+
+On Windows, use the full path to `uvx.exe` (run `where.exe uvx` to find it), e.g.
+`C:\\Users\\you\\.local\\bin\\uvx.exe`.
+
 ## Quick start (no clone, no venv)
 
-If you have [`uv`](https://docs.astral.sh/uv/) installed, `uvx` can fetch, build,
-and run the connector straight from GitHub — there's nothing to clone or install.
-Just have a `GITHUB_TOKEN` ready.
+If the package isn't published yet (or you want to track an unreleased commit),
+`uvx` can also fetch, build, and run the connector straight from GitHub. This
+path requires Git to be available to the process that launches it.
 
 **Claude Code — one command:**
 
@@ -197,6 +238,36 @@ pytest
 
 The test suite mocks the GitHub API with `httpx.MockTransport`, so it runs
 fully offline and makes no network calls.
+
+## Releasing (maintainers)
+
+Publishing is automated via GitHub Actions
+([`.github/workflows/publish.yml`](.github/workflows/publish.yml)) using PyPI
+**Trusted Publishing** (OIDC) — no API tokens are stored anywhere.
+
+**One-time PyPI setup** (before the first release):
+
+1. Sign in at [pypi.org](https://pypi.org) and go to **Your projects → Publishing**
+   (or **Account → Publishing** for a project that doesn't exist yet).
+2. Add a **pending publisher** with:
+   - PyPI Project Name: `github-mcp-connector`
+   - Owner: `winnerlose2026`
+   - Repository: `Github-mcp`
+   - Workflow name: `publish.yml`
+   - Environment name: `pypi`
+3. (Recommended) In the GitHub repo, create an **Environment** named `pypi`
+   (Settings → Environments) so the publish job is gated.
+
+**Cutting a release:**
+
+1. Bump `version` in `pyproject.toml`, commit, and merge to `main`.
+2. Tag and publish a GitHub Release (e.g. `v0.1.0`). Publishing the release
+   triggers the workflow, which builds the sdist + wheel, runs `twine check`,
+   and uploads to PyPI.
+3. Confirm it's live: `uvx github-mcp-connector@latest --help`.
+
+Until the first release is published, install via the
+[git-based quick start](#quick-start-no-clone-no-venv) instead.
 
 ## Security notes
 
