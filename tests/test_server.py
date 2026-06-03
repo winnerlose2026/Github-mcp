@@ -411,3 +411,46 @@ async def test_delete_branch_surfaces_api_error(monkeypatch):
     with pytest.raises(GitHubError) as exc:
         await server.delete_branch("o", "r", "missing")
     assert exc.value.status_code == 422
+
+
+async def test_create_pull_request_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.create_pull_request("o", "r", "t", "feature", "main")
+    assert exc.value.status_code == 403
+
+
+async def test_create_pull_request_posts_payload(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.method == "POST"
+        assert request.url.path == "/repos/o/r/pulls"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={
+                "number": 12,
+                "title": "t",
+                "state": "open",
+                "draft": True,
+                "body": "desc",
+                "head": {"ref": "feature"},
+                "base": {"ref": "main"},
+            },
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.create_pull_request(
+        "o", "r", "t", "feature", "main", body="desc", draft=True
+    )
+    assert captured["body"]["title"] == "t"
+    assert captured["body"]["head"] == "feature"
+    assert captured["body"]["base"] == "main"
+    assert captured["body"]["draft"] is True
+    assert captured["body"]["body"] == "desc"
+    assert result["number"] == 12
+    assert result["draft"] is True
+    assert result["body"] == "desc"

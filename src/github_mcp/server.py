@@ -764,6 +764,42 @@ async def create_or_update_file(
     }
 
 
+@mcp.tool()
+async def create_pull_request(
+    owner: str,
+    repo: str,
+    title: str,
+    head: str,
+    base: str,
+    body: str | None = None,
+    draft: bool = False,
+    maintainer_can_modify: bool = True,
+) -> dict[str, Any]:
+    """Open a new pull request.
+
+    `head` is the branch with your changes (for a cross-fork PR use
+    `owner:branch`); `base` is the branch you want to merge into (e.g. `main`).
+    Set `draft=True` to open it as a draft. Disabled in read-only mode; requires
+    a token with write access to the repository.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {
+        "title": title,
+        "head": head,
+        "base": base,
+        "draft": draft,
+        "maintainer_can_modify": maintainer_can_modify,
+    }
+    if body is not None:
+        payload["body"] = body
+    async with GitHubClient(config) as gh:
+        pull = await gh.post(f"/repos/{owner}/{repo}/pulls", json=payload)
+    summary = _summarize_pull(pull)
+    summary["body"] = pull.get("body")
+    return summary
+
+
 def main(argv: list[str] | None = None) -> None:
     """Console entry point. Selects the transport from CLI args/env."""
     import argparse
