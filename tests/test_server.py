@@ -379,3 +379,35 @@ async def test_create_or_update_file_creates_new_on_404(monkeypatch):
     result = await server.create_or_update_file("o", "r", "new.md", "x", "add")
     assert "sha" not in captured["body"]  # no sha -> create
     assert result["created"] is True
+
+
+async def test_delete_branch_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(204), read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.delete_branch("o", "r", "feature")
+    assert exc.value.status_code == 403
+
+
+async def test_delete_branch_calls_correct_ref(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        return httpx.Response(204)
+
+    install_mock(monkeypatch, handler)
+    result = await server.delete_branch("o", "r", "feature-x")
+    assert captured["method"] == "DELETE"
+    assert captured["path"] == "/repos/o/r/git/refs/heads/feature-x"
+    assert result == {"deleted": True, "branch": "feature-x"}
+
+
+async def test_delete_branch_surfaces_api_error(monkeypatch):
+    def handler(request):
+        return httpx.Response(422, json={"message": "Reference does not exist"})
+
+    install_mock(monkeypatch, handler)
+    with pytest.raises(GitHubError) as exc:
+        await server.delete_branch("o", "r", "missing")
+    assert exc.value.status_code == 422

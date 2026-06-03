@@ -136,6 +136,10 @@ class GitHubClient:
             return None
         return response.json()
 
+    async def delete(self, path: str) -> None:
+        # GitHub returns 204 No Content on a successful delete.
+        await self._request("DELETE", path)
+
 
 def _extract_error_detail(response: httpx.Response) -> str:
     """Pull the most useful human-readable error message out of a response."""
