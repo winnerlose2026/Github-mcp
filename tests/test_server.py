@@ -582,3 +582,53 @@ async def test_rerun_workflow_run_failed_only_endpoint(monkeypatch):
     assert captured["method"] == "POST"
     assert captured["path"] == "/repos/o/r/actions/runs/99/rerun-failed-jobs"
     assert result == {"rerun": True, "run_id": 99, "failed_only": True}
+
+
+async def test_create_release_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(201, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.create_release("o", "r", "v1.0.0")
+    assert exc.value.status_code == 403
+
+
+async def test_create_release_posts_payload(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.method == "POST"
+        assert request.url.path == "/repos/o/r/releases"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={"id": 99, "tag_name": "v1.0.0", "name": "v1.0.0",
+                  "draft": False, "prerelease": False, "body": "notes",
+                  "html_url": "u"},
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.create_release(
+        "o", "r", "v1.0.0", target_commitish="main", name="v1.0.0",
+        body="notes", generate_release_notes=True
+    )
+    assert captured["body"]["tag_name"] == "v1.0.0"
+    assert captured["body"]["target_commitish"] == "main"
+    assert captured["body"]["generate_release_notes"] is True
+    assert captured["body"]["draft"] is False
+    assert result["tag_name"] == "v1.0.0"
+    assert result["id"] == 99
+    assert result["body"] == "notes"
+
+
+async def test_create_release_surfaces_existing_tag_error(monkeypatch):
+    def handler(request):
+        return httpx.Response(
+            422, json={"message": "Validation Failed",
+                       "errors": [{"code": "already_exists", "field": "tag_name"}]}
+        )
+
+    install_mock(monkeypatch, handler)
+    with pytest.raises(GitHubError) as exc:
+        await server.create_release("o", "r", "v1.0.0")
+    assert exc.value.status_code == 422

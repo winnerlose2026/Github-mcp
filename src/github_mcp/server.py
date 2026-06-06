@@ -979,6 +979,54 @@ async def rerun_workflow_run(
     return {"rerun": True, "run_id": run_id, "failed_only": failed_only}
 
 
+@mcp.tool()
+async def create_release(
+    owner: str,
+    repo: str,
+    tag_name: str,
+    target_commitish: str | None = None,
+    name: str | None = None,
+    body: str | None = None,
+    draft: bool = False,
+    prerelease: bool = False,
+    generate_release_notes: bool = False,
+) -> dict[str, Any]:
+    """Create a release, creating its git tag if it doesn't already exist.
+
+    `tag_name` is the tag (e.g. `v1.2.0`). If that tag doesn't exist yet, it's
+    created pointing at `target_commitish` (a branch, tag, or commit SHA;
+    defaults to the repository's default branch). `name` is the release title,
+    `body` its notes. Set `generate_release_notes=True` to have GitHub
+    auto-generate notes from merged PRs (appended to `body` if both are given),
+    `draft=True` to save without publishing, or `prerelease=True` to mark it a
+    pre-release.
+
+    Publishing a (non-draft) release fires GitHub's `release: published` event —
+    handy for triggering release workflows. Disabled in read-only mode; requires
+    a token with write access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {
+        "tag_name": tag_name,
+        "draft": draft,
+        "prerelease": prerelease,
+        "generate_release_notes": generate_release_notes,
+    }
+    if target_commitish is not None:
+        payload["target_commitish"] = target_commitish
+    if name is not None:
+        payload["name"] = name
+    if body is not None:
+        payload["body"] = body
+    async with GitHubClient(config) as gh:
+        release = await gh.post(f"/repos/{owner}/{repo}/releases", json=payload)
+    summary = _summarize_release(release)
+    summary["id"] = release.get("id")
+    summary["body"] = release.get("body")
+    return summary
+
+
 def main(argv: list[str] | None = None) -> None:
     """Console entry point. Selects the transport from CLI args/env."""
     import argparse
