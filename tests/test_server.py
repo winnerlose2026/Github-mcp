@@ -954,7 +954,7 @@ async def test_find_reusable_repositories_builds_query(monkeypatch):
         captured["params"] = dict(request.url.params)
         return httpx.Response(
             200,
-            json={"items": [{
+            json={"total_count": 1, "items": [{
                 "full_name": "py-pdf/pypdf",
                 "description": "pure-python PDF library",
                 "stargazers_count": 7000,
@@ -976,18 +976,24 @@ async def test_find_reusable_repositories_builds_query(monkeypatch):
     assert "topic:pdf" in q
     assert "stars:>=100" in q
     assert "archived:false" in q
+    # defaults to ALL accessible repos, not just public
+    assert "is:public" not in q
     assert captured["params"]["sort"] == "stars"
-    assert result[0]["full_name"] == "py-pdf/pypdf"
-    assert result[0]["license"] == "BSD-3-Clause"
+    assert result["query"] == q
+    assert result["results"][0]["full_name"] == "py-pdf/pypdf"
+    assert result["results"][0]["license"] == "BSD-3-Clause"
 
 
-async def test_find_reusable_repositories_can_include_archived(monkeypatch):
+async def test_find_reusable_repositories_public_only_and_archived(monkeypatch):
     captured = {}
 
     def handler(request):
         captured["q"] = request.url.params["q"]
-        return httpx.Response(200, json={"items": []})
+        return httpx.Response(200, json={"total_count": 0, "items": []})
 
     install_mock(monkeypatch, handler)
-    await server.find_reusable_repositories("x", include_archived=True)
+    await server.find_reusable_repositories(
+        "x", public_only=True, include_archived=True
+    )
+    assert "is:public" in captured["q"]
     assert "archived:false" not in captured["q"]

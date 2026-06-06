@@ -13,7 +13,7 @@ Enterprise Server.
 
 ## Features
 
-- 🔍 **Search & discover** repositories, issues/PRs, and code — plus find reusable public repos (by license/activity) for what you're building
+- 🔍 **Search & discover** repositories, issues/PRs, and code — plus find reusable repos (across everything your token can see, license/activity-aware) for what you're building
 - 📦 **Repositories** — metadata, branches, file contents, directory listings, your repo list
 - 🧾 **Commits** — history, single-commit detail, and diffs between refs
 - 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign
@@ -60,7 +60,7 @@ Enterprise Server.
 | `list_dependabot_alerts` | Dependabot vulnerability alerts | |
 | `search_issues` | Search issues and PRs across GitHub | |
 | `search_code` | Search code across GitHub | |
-| `find_reusable_repositories` | Find reusable public repos (license/activity-aware) | |
+| `find_reusable_repositories` | Find reusable repos for what you're building (license/activity-aware; public + accessible private) | |
 | `create_pull_request` | Open a new pull request (supports draft) | ✅ |
 | `update_pull_request` | Edit title/body/base, close/reopen a PR | ✅ |
 | `merge_pull_request` | Merge a PR (merge/squash/rebase) | ✅ |

@@ -958,25 +958,41 @@ async def find_reusable_repositories(
     language: str | None = None,
     topic: str | None = None,
     min_stars: int = 0,
+    public_only: bool = False,
     include_archived: bool = False,
     limit: int = 10,
-) -> list[dict[str, Any]]:
-    """Find public repositories you could reuse for something you're building.
+) -> dict[str, Any]:
+    """Find repositories you could reuse for something you're building.
 
-    Describe what you need in `query` (e.g. "parse PDF invoices", "rate limiter",
-    "OAuth device flow") and this searches public GitHub, ranked by stars, and
-    returns the things that matter when deciding whether to adopt a project:
-    description, stars, primary language, **license**, topics, and how recently
-    it was pushed (so you can spot abandoned projects). Optionally narrow by
-    `language`, `topic`, or `min_stars`; archived repos are excluded unless
-    `include_archived=True`. Returns up to `limit` (max 50) candidates.
+    Searches every repository the token can see — public repos **and** the
+    private/org repos your token has access to — ranked by stars. Set
+    `public_only=True` to restrict to public results. Archived repos are
+    excluded unless `include_archived=True`. Returns the fields that matter when
+    deciding whether to adopt a project: description, stars, language,
+    **license**, topics, and last-pushed date (to spot abandoned projects). The
+    exact search string is returned as `query` so you can see and refine it.
 
-    Tip: check each result's `license` and `pushed_at` before depending on it —
-    no license usually means "not freely reusable".
+    PHRASING — get precise results (do this before calling):
+    - Translate the user's goal into a *focused* capability phrase: prefer
+      "JWT validation middleware" over "auth thing", "S3 multipart upload" over
+      "file storage". Concrete nouns beat adjectives.
+    - Add `language=` and/or `topic=` whenever you can infer them, and raise
+      `min_stars` (e.g. 50–500) to cut noise on broad topics.
+    - You may embed GitHub search qualifiers directly in `query` for precision,
+      e.g. `in:name,description`, `pushed:>2025-01-01`, `forks:>50`,
+      `license:mit`.
+    - If the user's need is ambiguous (language? runtime? scale? license?), ask
+      one clarifying question before searching rather than guessing.
+    - After results come back, if they look off-target, refine the phrasing
+      (narrower nouns, add qualifiers) and call again — iterate until precise.
+
+    Returns up to `limit` (max 50) candidates.
     """
     _require_token()
     limit = max(1, min(limit, 50))
-    qualifiers = [query.strip(), "is:public"]
+    qualifiers = [query.strip()]
+    if public_only:
+        qualifiers.append("is:public")
     if language:
         qualifiers.append(f"language:{language}")
     if topic:
@@ -991,9 +1007,10 @@ async def find_reusable_repositories(
             "/search/repositories",
             params={"q": q, "sort": "stars", "order": "desc", "per_page": limit},
         )
-    return [
+    candidates = [
         {
             "full_name": item.get("full_name"),
+            "private": item.get("private"),
             "description": item.get("description"),
             "stars": item.get("stargazers_count"),
             "language": item.get("language"),
@@ -1006,6 +1023,11 @@ async def find_reusable_repositories(
         }
         for item in result.get("items", [])
     ]
+    return {
+        "query": q,
+        "total_count": result.get("total_count"),
+        "results": candidates,
+    }
 
 
 # ---------------------------------------------------------------------------
