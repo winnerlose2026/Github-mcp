@@ -18,7 +18,7 @@ Enterprise Server.
 - 🧾 **Commits** — history, single-commit detail, and diffs between refs
 - 🐛 **Issues** — list, read, create, comment, and edit/close
 - 🔀 **Pull requests** — list, read, fetch diffs/changed files, open new PRs, and merge
-- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run runs, list releases
+- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run runs, list/create releases
 - 🔐 **Security** — list secret-scanning alerts; review PR reviews
 - ✍️ **Repo writes** — create branches and commit files (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
@@ -54,6 +54,7 @@ Enterprise Server.
 | `create_pull_request` | Open a new pull request (supports draft) | ✅ |
 | `merge_pull_request` | Merge a PR (merge/squash/rebase) | ✅ |
 | `rerun_workflow_run` | Re-run a workflow run (or just failed jobs) | ✅ |
+| `create_release` | Create a release (and its tag) | ✅ |
 | `create_issue` | Open a new issue | ✅ |
 | `update_issue` | Edit/close/reopen an issue | ✅ |
 | `add_issue_comment` | Comment on an issue or PR | ✅ |
