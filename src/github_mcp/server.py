@@ -952,6 +952,62 @@ async def list_dependabot_alerts(
     return [_summarize_dependabot_alert(a) for a in alerts]
 
 
+@mcp.tool()
+async def find_reusable_repositories(
+    query: str,
+    language: str | None = None,
+    topic: str | None = None,
+    min_stars: int = 0,
+    include_archived: bool = False,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Find public repositories you could reuse for something you're building.
+
+    Describe what you need in `query` (e.g. "parse PDF invoices", "rate limiter",
+    "OAuth device flow") and this searches public GitHub, ranked by stars, and
+    returns the things that matter when deciding whether to adopt a project:
+    description, stars, primary language, **license**, topics, and how recently
+    it was pushed (so you can spot abandoned projects). Optionally narrow by
+    `language`, `topic`, or `min_stars`; archived repos are excluded unless
+    `include_archived=True`. Returns up to `limit` (max 50) candidates.
+
+    Tip: check each result's `license` and `pushed_at` before depending on it —
+    no license usually means "not freely reusable".
+    """
+    _require_token()
+    limit = max(1, min(limit, 50))
+    qualifiers = [query.strip(), "is:public"]
+    if language:
+        qualifiers.append(f"language:{language}")
+    if topic:
+        qualifiers.append(f"topic:{topic}")
+    if min_stars > 0:
+        qualifiers.append(f"stars:>={min_stars}")
+    if not include_archived:
+        qualifiers.append("archived:false")
+    q = " ".join(qualifiers)
+    async with GitHubClient(config) as gh:
+        result = await gh.get(
+            "/search/repositories",
+            params={"q": q, "sort": "stars", "order": "desc", "per_page": limit},
+        )
+    return [
+        {
+            "full_name": item.get("full_name"),
+            "description": item.get("description"),
+            "stars": item.get("stargazers_count"),
+            "language": item.get("language"),
+            "license": (item.get("license") or {}).get("spdx_id"),
+            "topics": item.get("topics", []),
+            "open_issues": item.get("open_issues_count"),
+            "pushed_at": item.get("pushed_at"),
+            "archived": item.get("archived"),
+            "html_url": item.get("html_url"),
+        }
+        for item in result.get("items", [])
+    ]
+
+
 # ---------------------------------------------------------------------------
 # write tools (disabled in read-only mode)
 # ---------------------------------------------------------------------------

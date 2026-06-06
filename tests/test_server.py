@@ -944,3 +944,50 @@ async def test_create_gist_posts_files(monkeypatch):
     assert captured["body"]["files"] == {"a.txt": {"content": "hello"}}
     assert captured["body"]["public"] is False
     assert result["files"] == ["a.txt"]
+
+
+async def test_find_reusable_repositories_builds_query(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        assert request.url.path == "/search/repositories"
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={"items": [{
+                "full_name": "py-pdf/pypdf",
+                "description": "pure-python PDF library",
+                "stargazers_count": 7000,
+                "language": "Python",
+                "license": {"spdx_id": "BSD-3-Clause"},
+                "topics": ["pdf", "python"],
+                "pushed_at": "2026-05-01T00:00:00Z",
+                "archived": False,
+            }]},
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.find_reusable_repositories(
+        "parse pdf", language="python", min_stars=100, topic="pdf"
+    )
+    q = captured["params"]["q"]
+    assert "parse pdf" in q
+    assert "language:python" in q
+    assert "topic:pdf" in q
+    assert "stars:>=100" in q
+    assert "archived:false" in q
+    assert captured["params"]["sort"] == "stars"
+    assert result[0]["full_name"] == "py-pdf/pypdf"
+    assert result[0]["license"] == "BSD-3-Clause"
+
+
+async def test_find_reusable_repositories_can_include_archived(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["q"] = request.url.params["q"]
+        return httpx.Response(200, json={"items": []})
+
+    install_mock(monkeypatch, handler)
+    await server.find_reusable_repositories("x", include_archived=True)
+    assert "archived:false" not in captured["q"]
