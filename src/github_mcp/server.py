@@ -206,6 +206,88 @@ def _summarize_secret_alert(alert: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _summarize_comment(comment: dict[str, Any]) -> dict[str, Any]:
+    # Works for issue/PR conversation comments and inline review comments
+    # (the latter add path/line).
+    out = {
+        "id": comment.get("id"),
+        "user": (comment.get("user") or {}).get("login"),
+        "body": comment.get("body"),
+        "created_at": comment.get("created_at"),
+        "html_url": comment.get("html_url"),
+    }
+    if "path" in comment:
+        out["path"] = comment.get("path")
+        out["line"] = comment.get("line")
+    return out
+
+
+def _summarize_notification(n: dict[str, Any]) -> dict[str, Any]:
+    subject = n.get("subject") or {}
+    return {
+        "id": n.get("id"),
+        "reason": n.get("reason"),
+        "unread": n.get("unread"),
+        "title": subject.get("title"),
+        "type": subject.get("type"),
+        "url": subject.get("url"),
+        "repository": (n.get("repository") or {}).get("full_name"),
+        "updated_at": n.get("updated_at"),
+    }
+
+
+def _summarize_check_run(run: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": run.get("id"),
+        "name": run.get("name"),
+        "status": run.get("status"),
+        "conclusion": run.get("conclusion"),
+        "started_at": run.get("started_at"),
+        "completed_at": run.get("completed_at"),
+        "html_url": run.get("html_url"),
+    }
+
+
+def _summarize_code_scanning_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    rule = alert.get("rule") or {}
+    tool = alert.get("tool") or {}
+    return {
+        "number": alert.get("number"),
+        "state": alert.get("state"),
+        "rule_id": rule.get("id"),
+        "severity": rule.get("security_severity_level") or rule.get("severity"),
+        "description": rule.get("description"),
+        "tool": tool.get("name"),
+        "created_at": alert.get("created_at"),
+        "html_url": alert.get("html_url"),
+    }
+
+
+def _summarize_dependabot_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    advisory = alert.get("security_advisory") or {}
+    dep = (alert.get("dependency") or {}).get("package") or {}
+    return {
+        "number": alert.get("number"),
+        "state": alert.get("state"),
+        "package": dep.get("name"),
+        "ecosystem": dep.get("ecosystem"),
+        "severity": advisory.get("severity"),
+        "summary": advisory.get("summary"),
+        "created_at": alert.get("created_at"),
+        "html_url": alert.get("html_url"),
+    }
+
+
+def _summarize_gist(gist: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": gist.get("id"),
+        "description": gist.get("description"),
+        "public": gist.get("public"),
+        "files": list((gist.get("files") or {}).keys()),
+        "html_url": gist.get("html_url"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # read tools
 # ---------------------------------------------------------------------------
@@ -690,6 +772,186 @@ async def list_secret_scanning_alerts(
     return [_summarize_secret_alert(a) for a in alerts]
 
 
+@mcp.tool()
+async def list_issue_comments(
+    owner: str, repo: str, issue_number: int, limit: int = 30
+) -> list[dict[str, Any]]:
+    """List the conversation comments on an issue or pull request.
+
+    These are the top-level timeline comments (not inline code-review comments —
+    use `list_pull_request_review_comments` for those). Returns up to `limit`
+    (max 100) comments.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        comments = await gh.get(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            params={"per_page": limit},
+        )
+    return [_summarize_comment(c) for c in comments]
+
+
+@mcp.tool()
+async def list_pull_request_review_comments(
+    owner: str, repo: str, pull_number: int, limit: int = 50
+) -> list[dict[str, Any]]:
+    """List inline code-review comments on a pull request.
+
+    These are comments anchored to specific files/lines in the diff (each
+    includes `path` and `line`). Returns up to `limit` (max 100) comments.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        comments = await gh.get(
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/comments",
+            params={"per_page": limit},
+        )
+    return [_summarize_comment(c) for c in comments]
+
+
+@mcp.tool()
+async def list_notifications(
+    all: bool = False, participating: bool = False, limit: int = 30
+) -> list[dict[str, Any]]:
+    """List the authenticated user's notifications across all repositories.
+
+    By default returns only unread notifications; set `all=True` to include read
+    ones, or `participating=True` to limit to threads you're directly
+    participating in. Each item's `id` is the thread id for
+    `mark_notification_read`. Returns up to `limit` (max 50) notifications.
+    """
+    _require_token()
+    limit = max(1, min(limit, 50))
+    async with GitHubClient(config) as gh:
+        notifications = await gh.get(
+            "/notifications",
+            params={"all": all, "participating": participating, "per_page": limit},
+        )
+    return [_summarize_notification(n) for n in notifications]
+
+
+@mcp.tool()
+async def get_combined_status(owner: str, repo: str, ref: str) -> dict[str, Any]:
+    """Get the combined commit status for a ref (branch, tag, or SHA).
+
+    Returns the overall `state` (`success`/`pending`/`failure`) and each
+    individual status context. This covers the legacy "statuses" API; for
+    GitHub Actions checks use `list_check_runs`.
+    """
+    _require_token()
+    async with GitHubClient(config) as gh:
+        data = await gh.get(f"/repos/{owner}/{repo}/commits/{ref}/status")
+    return {
+        "state": data.get("state"),
+        "total_count": data.get("total_count"),
+        "statuses": [
+            {
+                "context": s.get("context"),
+                "state": s.get("state"),
+                "description": s.get("description"),
+                "target_url": s.get("target_url"),
+            }
+            for s in data.get("statuses", [])
+        ],
+    }
+
+
+@mcp.tool()
+async def list_check_runs(
+    owner: str, repo: str, ref: str, limit: int = 30
+) -> list[dict[str, Any]]:
+    """List the check runs for a ref (branch, tag, or SHA).
+
+    These are the GitHub Actions / app check results for the commit. Use this to
+    inspect CI on any ref without going through a pull request. Returns up to
+    `limit` (max 100) check runs.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        result = await gh.get(
+            f"/repos/{owner}/{repo}/commits/{ref}/check-runs",
+            params={"per_page": limit},
+        )
+    return [_summarize_check_run(c) for c in result.get("check_runs", [])]
+
+
+@mcp.tool()
+async def get_repository_tree(
+    owner: str, repo: str, ref: str | None = None, recursive: bool = True
+) -> dict[str, Any]:
+    """Get the file tree of a repository at a ref.
+
+    `ref` is a branch, tag, or commit SHA (defaults to the repository's default
+    branch). With `recursive=True` (default) the entire tree is returned in one
+    call — useful for grasping repo layout. `truncated` is True if GitHub capped
+    the response (very large repos).
+    """
+    _require_token()
+    async with GitHubClient(config) as gh:
+        if ref is None:
+            repo_data = await gh.get(f"/repos/{owner}/{repo}")
+            ref = repo_data.get("default_branch")
+        commit = await gh.get(f"/repos/{owner}/{repo}/commits/{ref}")
+        tree_sha = (commit.get("commit", {}).get("tree") or {}).get("sha")
+        tree = await gh.get(
+            f"/repos/{owner}/{repo}/git/trees/{tree_sha}",
+            params={"recursive": "1" if recursive else None},
+        )
+    return {
+        "ref": ref,
+        "sha": tree.get("sha"),
+        "truncated": tree.get("truncated"),
+        "entries": [
+            {"path": e.get("path"), "type": e.get("type"), "size": e.get("size")}
+            for e in tree.get("tree", [])
+        ],
+    }
+
+
+@mcp.tool()
+async def list_code_scanning_alerts(
+    owner: str, repo: str, state: str = "open", limit: int = 30
+) -> list[dict[str, Any]]:
+    """List code-scanning (CodeQL etc.) alerts for a repository.
+
+    `state` is `open` (default), `dismissed`, `fixed`, or `all`. Returns each
+    alert's rule, severity, and tool. Requires a token with access to security
+    alerts. Returns up to `limit` (max 100) alerts.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        alerts = await gh.get(
+            f"/repos/{owner}/{repo}/code-scanning/alerts",
+            params={"state": state, "per_page": limit},
+        )
+    return [_summarize_code_scanning_alert(a) for a in alerts]
+
+
+@mcp.tool()
+async def list_dependabot_alerts(
+    owner: str, repo: str, state: str = "open", limit: int = 30
+) -> list[dict[str, Any]]:
+    """List Dependabot (vulnerable-dependency) alerts for a repository.
+
+    `state` is `open` (default), `dismissed`, `fixed`, `auto_dismissed`, or
+    `all`. Returns the affected package, severity, and advisory summary. Requires
+    a token with access to security alerts. Returns up to `limit` (max 100)
+    alerts.
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        alerts = await gh.get(
+            f"/repos/{owner}/{repo}/dependabot/alerts",
+            params={"state": state, "per_page": limit},
+        )
+    return [_summarize_dependabot_alert(a) for a in alerts]
+
+
 # ---------------------------------------------------------------------------
 # write tools (disabled in read-only mode)
 # ---------------------------------------------------------------------------
@@ -1025,6 +1287,235 @@ async def create_release(
     summary["id"] = release.get("id")
     summary["body"] = release.get("body")
     return summary
+
+
+@mcp.tool()
+async def submit_pull_request_review(
+    owner: str,
+    repo: str,
+    pull_number: int,
+    event: str,
+    body: str | None = None,
+) -> dict[str, Any]:
+    """Submit a review on a pull request.
+
+    `event` is `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`. `body` is the review
+    summary text (required by GitHub for `REQUEST_CHANGES` and `COMMENT`).
+    Disabled in read-only mode; requires write access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {"event": event}
+    if body is not None:
+        payload["body"] = body
+    async with GitHubClient(config) as gh:
+        review = await gh.post(
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/reviews", json=payload
+        )
+    return _summarize_review(review)
+
+
+@mcp.tool()
+async def add_pull_request_review_comment(
+    owner: str,
+    repo: str,
+    pull_number: int,
+    body: str,
+    commit_id: str,
+    path: str,
+    line: int,
+    side: str = "RIGHT",
+) -> dict[str, Any]:
+    """Add an inline review comment on a specific line of a pull request's diff.
+
+    `commit_id` is the SHA being commented on (typically the PR head), `path`
+    the file, `line` the line number in the file, and `side` is `RIGHT` (the new
+    version, default) or `LEFT` (the old version). Disabled in read-only mode;
+    requires write access.
+    """
+    _require_token()
+    _require_write()
+    payload = {
+        "body": body,
+        "commit_id": commit_id,
+        "path": path,
+        "line": line,
+        "side": side,
+    }
+    async with GitHubClient(config) as gh:
+        comment = await gh.post(
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/comments", json=payload
+        )
+    return _summarize_comment(comment)
+
+
+@mcp.tool()
+async def update_pull_request(
+    owner: str,
+    repo: str,
+    pull_number: int,
+    title: str | None = None,
+    body: str | None = None,
+    state: str | None = None,
+    base: str | None = None,
+) -> dict[str, Any]:
+    """Edit a pull request: change its title, body, base branch, or state.
+
+    Pass `state` as `closed` to close or `open` to reopen. `base` retargets the
+    PR onto a different base branch. Only provided fields change. (Note: toggling
+    draft↔ready isn't supported by the REST API.) Disabled in read-only mode;
+    requires write access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {}
+    if title is not None:
+        payload["title"] = title
+    if body is not None:
+        payload["body"] = body
+    if state is not None:
+        payload["state"] = state
+    if base is not None:
+        payload["base"] = base
+    if not payload:
+        raise GitHubError(
+            400,
+            "PATCH",
+            f"/repos/{owner}/{repo}/pulls/{pull_number}",
+            "Nothing to update: provide at least one of title, body, state, base.",
+        )
+    async with GitHubClient(config) as gh:
+        pull = await gh.patch(
+            f"/repos/{owner}/{repo}/pulls/{pull_number}", json=payload
+        )
+    summary = _summarize_pull(pull)
+    summary["body"] = pull.get("body")
+    return summary
+
+
+@mcp.tool()
+async def mark_notification_read(thread_id: str) -> dict[str, Any]:
+    """Mark a notification thread as read.
+
+    `thread_id` is the `id` from `list_notifications`. Disabled in read-only
+    mode; requires write access.
+    """
+    _require_token()
+    _require_write()
+    async with GitHubClient(config) as gh:
+        await gh.patch(f"/notifications/threads/{thread_id}", json={})
+    return {"marked_read": True, "thread_id": thread_id}
+
+
+@mcp.tool()
+async def trigger_workflow(
+    owner: str,
+    repo: str,
+    workflow_id: str,
+    ref: str,
+    inputs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Manually trigger a workflow_dispatch run.
+
+    `workflow_id` is the workflow file name (e.g. `ci.yml`) or its numeric id.
+    `ref` is the branch or tag to run on. `inputs` is an optional map of the
+    workflow's declared inputs. The workflow must define an `on: workflow_dispatch`
+    trigger. Disabled in read-only mode; requires write access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {"ref": ref}
+    if inputs:
+        payload["inputs"] = inputs
+    async with GitHubClient(config) as gh:
+        await gh.post(
+            f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
+            json=payload,
+        )
+    return {"dispatched": True, "workflow_id": workflow_id, "ref": ref}
+
+
+@mcp.tool()
+async def add_labels(
+    owner: str, repo: str, issue_number: int, labels: list[str]
+) -> dict[str, Any]:
+    """Add labels to an issue or pull request (existing labels are kept).
+
+    Disabled in read-only mode; requires write access.
+    """
+    _require_token()
+    _require_write()
+    async with GitHubClient(config) as gh:
+        result = await gh.post(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/labels",
+            json={"labels": labels},
+        )
+    return {"labels": [lbl.get("name") for lbl in result]}
+
+
+@mcp.tool()
+async def remove_label(
+    owner: str, repo: str, issue_number: int, label: str
+) -> dict[str, Any]:
+    """Remove a single label from an issue or pull request.
+
+    Disabled in read-only mode; requires write access.
+    """
+    _require_token()
+    _require_write()
+    async with GitHubClient(config) as gh:
+        result = await gh.delete(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/labels/{label}"
+        )
+    remaining = (
+        [lbl.get("name") for lbl in result] if isinstance(result, list) else []
+    )
+    return {"removed": label, "labels": remaining}
+
+
+@mcp.tool()
+async def add_assignees(
+    owner: str, repo: str, issue_number: int, assignees: list[str]
+) -> dict[str, Any]:
+    """Assign users to an issue or pull request.
+
+    `assignees` is a list of GitHub logins. Disabled in read-only mode; requires
+    write access.
+    """
+    _require_token()
+    _require_write()
+    async with GitHubClient(config) as gh:
+        result = await gh.post(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/assignees",
+            json={"assignees": assignees},
+        )
+    return {
+        "number": result.get("number"),
+        "assignees": [a.get("login") for a in result.get("assignees", [])],
+    }
+
+
+@mcp.tool()
+async def create_gist(
+    files: dict[str, str], description: str | None = None, public: bool = False
+) -> dict[str, Any]:
+    """Create a gist.
+
+    `files` maps filename -> file content (e.g. `{"notes.md": "# hello"}`).
+    `public=False` (default) creates a secret gist. Disabled in read-only mode;
+    requires write access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {
+        "public": public,
+        "files": {name: {"content": content} for name, content in files.items()},
+    }
+    if description is not None:
+        payload["description"] = description
+    async with GitHubClient(config) as gh:
+        gist = await gh.post("/gists", json=payload)
+    return _summarize_gist(gist)
 
 
 def main(argv: list[str] | None = None) -> None:

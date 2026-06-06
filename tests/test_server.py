@@ -632,3 +632,315 @@ async def test_create_release_surfaces_existing_tag_error(monkeypatch):
     with pytest.raises(GitHubError) as exc:
         await server.create_release("o", "r", "v1.0.0")
     assert exc.value.status_code == 422
+
+
+# --- tier 1/2/3 tools -------------------------------------------------------
+
+
+async def test_list_issue_comments(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/issues/4/comments"
+        return httpx.Response(
+            200, json=[{"id": 1, "user": {"login": "jd"}, "body": "hi"}]
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_issue_comments("o", "r", 4)
+    assert result[0]["user"] == "jd"
+    assert result[0]["body"] == "hi"
+
+
+async def test_list_pull_request_review_comments_includes_path(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/pulls/4/comments"
+        return httpx.Response(
+            200,
+            json=[{"id": 2, "user": {"login": "jd"}, "body": "nit",
+                   "path": "app.py", "line": 10}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_pull_request_review_comments("o", "r", 4)
+    assert result[0]["path"] == "app.py"
+    assert result[0]["line"] == 10
+
+
+async def test_list_notifications(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        assert request.url.path == "/notifications"
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json=[{"id": "99", "reason": "review_requested", "unread": True,
+                   "subject": {"title": "PR x", "type": "PullRequest"},
+                   "repository": {"full_name": "o/r"}}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_notifications(all=True)
+    assert result[0]["title"] == "PR x"
+    assert captured["params"]["all"] == "true"
+
+
+async def test_get_combined_status(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/commits/main/status"
+        return httpx.Response(
+            200,
+            json={"state": "success", "total_count": 1,
+                  "statuses": [{"context": "ci", "state": "success"}]},
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.get_combined_status("o", "r", "main")
+    assert result["state"] == "success"
+    assert result["statuses"][0]["context"] == "ci"
+
+
+async def test_list_check_runs(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/commits/main/check-runs"
+        return httpx.Response(
+            200,
+            json={"check_runs": [{"id": 1, "name": "Test", "status": "completed",
+                                  "conclusion": "success"}]},
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_check_runs("o", "r", "main")
+    assert result[0]["conclusion"] == "success"
+
+
+async def test_get_repository_tree_resolves_ref(monkeypatch):
+    def handler(request):
+        p = request.url.path
+        if p == "/repos/o/r/commits/main":
+            return httpx.Response(200, json={"commit": {"tree": {"sha": "t1"}}})
+        if p == "/repos/o/r/git/trees/t1":
+            assert request.url.params["recursive"] == "1"
+            return httpx.Response(
+                200,
+                json={"sha": "t1", "truncated": False,
+                      "tree": [{"path": "app.py", "type": "blob", "size": 5}]},
+            )
+        raise AssertionError(p)
+
+    install_mock(monkeypatch, handler)
+    result = await server.get_repository_tree("o", "r", ref="main")
+    assert result["sha"] == "t1"
+    assert result["entries"][0]["path"] == "app.py"
+
+
+async def test_list_code_scanning_alerts(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/code-scanning/alerts"
+        return httpx.Response(
+            200,
+            json=[{"number": 1, "state": "open",
+                   "rule": {"id": "py/x", "security_severity_level": "high",
+                            "description": "bad"},
+                   "tool": {"name": "CodeQL"}}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_code_scanning_alerts("o", "r")
+    assert result[0]["severity"] == "high"
+    assert result[0]["tool"] == "CodeQL"
+
+
+async def test_list_dependabot_alerts(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/dependabot/alerts"
+        return httpx.Response(
+            200,
+            json=[{"number": 1, "state": "open",
+                   "security_advisory": {"severity": "critical", "summary": "RCE"},
+                   "dependency": {"package": {"name": "requests",
+                                              "ecosystem": "pip"}}}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_dependabot_alerts("o", "r")
+    assert result[0]["package"] == "requests"
+    assert result[0]["severity"] == "critical"
+
+
+async def test_submit_pull_request_review_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.submit_pull_request_review("o", "r", 1, "APPROVE")
+    assert exc.value.status_code == 403
+
+
+async def test_submit_pull_request_review_posts(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.url.path == "/repos/o/r/pulls/1/reviews"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"id": 1, "user": {"login": "jd"}, "state": "APPROVED"}
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.submit_pull_request_review(
+        "o", "r", 1, "APPROVE", body="lgtm"
+    )
+    assert captured["body"] == {"event": "APPROVE", "body": "lgtm"}
+    assert result["state"] == "APPROVED"
+
+
+async def test_add_pull_request_review_comment_posts(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.url.path == "/repos/o/r/pulls/1/comments"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201, json={"id": 9, "user": {"login": "jd"}, "body": "nit",
+                       "path": "app.py", "line": 3}
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.add_pull_request_review_comment(
+        "o", "r", 1, "nit", "sha1", "app.py", 3
+    )
+    assert captured["body"]["commit_id"] == "sha1"
+    assert captured["body"]["side"] == "RIGHT"
+    assert result["path"] == "app.py"
+
+
+async def test_update_pull_request_requires_field(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(GitHubError) as exc:
+        await server.update_pull_request("o", "r", 1)
+    assert exc.value.status_code == 400
+
+
+async def test_update_pull_request_patches(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.method == "PATCH"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"number": 1, "state": "closed", "title": "t",
+                       "base": {"ref": "main"}, "head": {"ref": "f"}}
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.update_pull_request("o", "r", 1, state="closed")
+    assert captured["body"] == {"state": "closed"}
+    assert result["state"] == "closed"
+
+
+async def test_mark_notification_read(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        return httpx.Response(205)
+
+    install_mock(monkeypatch, handler)
+    result = await server.mark_notification_read("99")
+    assert captured["method"] == "PATCH"
+    assert captured["path"] == "/notifications/threads/99"
+    assert result == {"marked_read": True, "thread_id": "99"}
+
+
+async def test_trigger_workflow_posts_ref_and_inputs(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.url.path == "/repos/o/r/actions/workflows/ci.yml/dispatches"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(204)
+
+    install_mock(monkeypatch, handler)
+    result = await server.trigger_workflow("o", "r", "ci.yml", "main",
+                                           inputs={"env": "prod"})
+    assert captured["body"] == {"ref": "main", "inputs": {"env": "prod"}}
+    assert result["dispatched"] is True
+
+
+async def test_trigger_workflow_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(204), read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.trigger_workflow("o", "r", "ci.yml", "main")
+    assert exc.value.status_code == 403
+
+
+async def test_add_labels(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.url.path == "/repos/o/r/issues/4/labels"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=[{"name": "bug"}, {"name": "p1"}])
+
+    install_mock(monkeypatch, handler)
+    result = await server.add_labels("o", "r", 4, ["bug", "p1"])
+    assert captured["body"] == {"labels": ["bug", "p1"]}
+    assert result["labels"] == ["bug", "p1"]
+
+
+async def test_remove_label_returns_remaining(monkeypatch):
+    def handler(request):
+        assert request.method == "DELETE"
+        assert request.url.path == "/repos/o/r/issues/4/labels/bug"
+        return httpx.Response(200, json=[{"name": "p1"}])
+
+    install_mock(monkeypatch, handler)
+    result = await server.remove_label("o", "r", 4, "bug")
+    assert result == {"removed": "bug", "labels": ["p1"]}
+
+
+async def test_add_assignees(monkeypatch):
+    def handler(request):
+        import json
+        assert request.url.path == "/repos/o/r/issues/4/assignees"
+        assert json.loads(request.content) == {"assignees": ["jd"]}
+        return httpx.Response(
+            201, json={"number": 4, "assignees": [{"login": "jd"}]}
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.add_assignees("o", "r", 4, ["jd"])
+    assert result["assignees"] == ["jd"]
+
+
+async def test_create_gist_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(201, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.create_gist({"a.txt": "x"})
+    assert exc.value.status_code == 403
+
+
+async def test_create_gist_posts_files(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        import json
+        assert request.url.path == "/gists"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={"id": "g1", "description": "d", "public": False,
+                  "files": {"a.txt": {}}, "html_url": "u"},
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await server.create_gist({"a.txt": "hello"}, description="d")
+    assert captured["body"]["files"] == {"a.txt": {"content": "hello"}}
+    assert captured["body"]["public"] is False
+    assert result["files"] == ["a.txt"]

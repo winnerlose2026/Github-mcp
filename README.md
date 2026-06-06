@@ -16,11 +16,12 @@ Enterprise Server.
 - 🔍 **Search** repositories, issues/PRs, and code with GitHub's query syntax
 - 📦 **Repositories** — metadata, branches, file contents, directory listings, your repo list
 - 🧾 **Commits** — history, single-commit detail, and diffs between refs
-- 🐛 **Issues** — list, read, create, comment, and edit/close
-- 🔀 **Pull requests** — list, read, fetch diffs/changed files, open new PRs, and merge
-- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run runs, list/create releases
-- 🔐 **Security** — list secret-scanning alerts; review PR reviews
-- ✍️ **Repo writes** — create branches and commit files (gated by read-only mode)
+- 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign
+- 🔀 **Pull requests** — list, read, diffs/files, comments, open, update, merge, and review
+- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch workflows, commit statuses & check runs, list/create releases
+- 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts
+- 🔔 **Notifications** — list and mark read across all your repos
+- ✍️ **Repo writes** — create branches, commit files, manage labels/assignees, create gists (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
 - 🏢 **Enterprise-friendly** — set `GITHUB_API_URL` for GitHub Enterprise Server
 
@@ -32,35 +33,52 @@ Enterprise Server.
 | `list_my_repositories` | List repos the token can access | |
 | `search_repositories` | Search repositories by query | |
 | `get_repository` | Repository metadata | |
+| `get_repository_tree` | Recursive file tree at a ref | |
 | `list_branches` | Branches with head commit SHAs | |
 | `get_file_contents` | Read a file (decoded) or list a directory | |
 | `list_commits` | Recent commits, optional branch/path filter | |
 | `get_commit` | A single commit with stats and changed files | |
 | `compare_commits` | Diff/ahead-behind between two refs | |
+| `get_combined_status` | Combined commit status for a ref | |
+| `list_check_runs` | Check runs for a ref | |
 | `list_issues` | Issues by state/labels | |
 | `get_issue` | A single issue with full body | |
+| `list_issue_comments` | Conversation comments on an issue/PR | |
 | `list_pull_requests` | Pull requests by state | |
 | `get_pull_request` | A single PR with body and merge status | |
 | `get_pull_request_diff` | Unified diff for a PR (truncated) | |
 | `list_pull_request_files` | Files changed in a PR | |
 | `list_pull_request_reviews` | Reviews submitted on a PR | |
+| `list_pull_request_review_comments` | Inline code-review comments on a PR | |
 | `list_workflow_runs` | Recent GitHub Actions runs | |
 | `list_workflow_run_jobs` | Jobs in a run (flags failed steps) | |
 | `get_job_logs` | Plain-text logs for a job (tail) | |
 | `list_releases` | Releases for a repository | |
+| `list_notifications` | Your notifications across all repos | |
 | `list_secret_scanning_alerts` | Secret-scanning alerts (no secret values) | |
+| `list_code_scanning_alerts` | Code-scanning (CodeQL) alerts | |
+| `list_dependabot_alerts` | Dependabot vulnerability alerts | |
 | `search_issues` | Search issues and PRs across GitHub | |
 | `search_code` | Search code across GitHub | |
 | `create_pull_request` | Open a new pull request (supports draft) | ✅ |
+| `update_pull_request` | Edit title/body/base, close/reopen a PR | ✅ |
 | `merge_pull_request` | Merge a PR (merge/squash/rebase) | ✅ |
+| `submit_pull_request_review` | Approve / request changes / comment | ✅ |
+| `add_pull_request_review_comment` | Inline comment on a PR diff line | ✅ |
 | `rerun_workflow_run` | Re-run a workflow run (or just failed jobs) | ✅ |
+| `trigger_workflow` | Dispatch a workflow_dispatch run | ✅ |
 | `create_release` | Create a release (and its tag) | ✅ |
 | `create_issue` | Open a new issue | ✅ |
 | `update_issue` | Edit/close/reopen an issue | ✅ |
 | `add_issue_comment` | Comment on an issue or PR | ✅ |
+| `add_labels` | Add labels to an issue/PR | ✅ |
+| `remove_label` | Remove a label from an issue/PR | ✅ |
+| `add_assignees` | Assign users to an issue/PR | ✅ |
+| `mark_notification_read` | Mark a notification thread read | ✅ |
 | `create_branch` | Create a branch from a ref | ✅ |
 | `delete_branch` | Delete a branch | ✅ |
 | `create_or_update_file` | Commit a file (create or update) | ✅ |
+| `create_gist` | Create a (secret or public) gist | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 
