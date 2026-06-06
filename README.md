@@ -1,10 +1,13 @@
 # GitHub MCP Connector
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that
-connects **Claude** to **GitHub**. It exposes a focused set of GitHub REST API
-operations as MCP tools, so Claude (Desktop, Code, or any MCP client) can read
-repositories, browse files and commit history, triage issues, review pull
-requests, and—optionally—open issues and post comments.
+connects **Claude** to **GitHub**. It exposes 50+ GitHub REST API operations as
+MCP tools, so Claude (Desktop, Code, or any MCP client) can search and read
+repositories, files, and commit history; triage and comment on issues; review,
+open, and merge pull requests; drive CI (read logs, re-run, dispatch); inspect
+security alerts; and—optionally—make changes (open/merge PRs, submit reviews,
+manage labels/assignees, commit files, cut releases). Every write is gated by a
+single read-only switch.
 
 It's a small, dependency-light Python package (`mcp` + `httpx`) that you point
 at a GitHub token. It supports both stdio (the default for Claude Desktop/Code)
@@ -95,9 +98,14 @@ Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
     account can access (public and private).
   - **Only specific repositories:** use a fine-grained PAT and select just those
     repos under "Repository access".
-  - **Permissions:** read access is enough for the read tools; to use the write
-    tools (`create_issue`, `add_issue_comment`) the token also needs issue
-    write access (classic: `repo`; fine-grained: *Issues → Read and write*).
+  - **Permissions:** read access is enough for the read tools. The write tools
+    need scopes matching what they touch — for a classic PAT the `repo` scope
+    covers most (issues, PRs, reviews, labels, assignees, branches, files,
+    releases, statuses), `workflow` is required for `trigger_workflow` /
+    `rerun_workflow_run`, and `gist` for `create_gist`. Fine-grained tokens need
+    the corresponding per-resource "Read and write" permissions (Contents,
+    Issues, Pull requests, Actions, etc.), and security-alert tools require the
+    relevant code-scanning/Dependabot/secret-scanning alert read permissions.
 
 ## Install from PyPI (recommended)
 

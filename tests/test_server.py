@@ -997,3 +997,62 @@ async def test_find_reusable_repositories_public_only_and_archived(monkeypatch):
     )
     assert "is:public" in captured["q"]
     assert "archived:false" not in captured["q"]
+
+
+# --- code-review fixes: read-only gating + validation -----------------------
+
+
+@pytest.mark.parametrize("call", [
+    lambda: server.add_pull_request_review_comment("o", "r", 1, "b", "s", "a.py", 1),
+    lambda: server.update_pull_request("o", "r", 1, state="closed"),
+    lambda: server.mark_notification_read("9"),
+    lambda: server.add_labels("o", "r", 1, ["bug"]),
+    lambda: server.remove_label("o", "r", 1, "bug"),
+    lambda: server.add_assignees("o", "r", 1, ["jd"]),
+])
+async def test_new_write_tools_blocked_in_read_only(monkeypatch, call):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await call()
+    assert exc.value.status_code == 403
+
+
+async def test_remove_label_percent_encodes_name(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["path"] = request.url.raw_path.decode()
+        return httpx.Response(200, json=[])
+
+    install_mock(monkeypatch, handler)
+    await server.remove_label("o", "r", 4, "type/bug")
+    # the slash in the label must be encoded, not treated as a path separator
+    assert "type%2Fbug" in captured["path"]
+    assert "/labels/type/bug" not in captured["path"]
+
+
+async def test_submit_pull_request_review_requires_body_for_changes(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(GitHubError) as exc:
+        await server.submit_pull_request_review("o", "r", 1, "REQUEST_CHANGES")
+    assert exc.value.status_code == 400
+
+
+async def test_find_reusable_repositories_rejects_empty_query(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={"items": []}))
+    with pytest.raises(GitHubError) as exc:
+        await server.find_reusable_repositories("   ")
+    assert exc.value.status_code == 400
+
+
+async def test_get_repository_tree_errors_without_default_branch(monkeypatch):
+    def handler(request):
+        if request.url.path == "/repos/o/r":
+            return httpx.Response(200, json={})  # no default_branch
+        raise AssertionError("should not reach commits/tree")
+
+    install_mock(monkeypatch, handler)
+    with pytest.raises(GitHubError) as exc:
+        await server.get_repository_tree("o", "r")
+    assert exc.value.status_code == 404

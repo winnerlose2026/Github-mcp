@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 from typing import Any
+from urllib.parse import quote
 
 from mcp.server.fastmcp import FastMCP
 
@@ -894,8 +895,22 @@ async def get_repository_tree(
         if ref is None:
             repo_data = await gh.get(f"/repos/{owner}/{repo}")
             ref = repo_data.get("default_branch")
+            if not ref:
+                raise GitHubError(
+                    404,
+                    "GET",
+                    f"/repos/{owner}/{repo}",
+                    "Could not determine a default branch; pass `ref` explicitly.",
+                )
         commit = await gh.get(f"/repos/{owner}/{repo}/commits/{ref}")
         tree_sha = (commit.get("commit", {}).get("tree") or {}).get("sha")
+        if not tree_sha:
+            raise GitHubError(
+                404,
+                "GET",
+                f"/repos/{owner}/{repo}/commits/{ref}",
+                f"Could not resolve a tree for ref '{ref}'.",
+            )
         tree = await gh.get(
             f"/repos/{owner}/{repo}/git/trees/{tree_sha}",
             params={"recursive": "1" if recursive else None},
@@ -989,6 +1004,14 @@ async def find_reusable_repositories(
     Returns up to `limit` (max 50) candidates.
     """
     _require_token()
+    if not query.strip():
+        raise GitHubError(
+            400,
+            "GET",
+            "/search/repositories",
+            "`query` must be a non-empty search phrase (qualifiers alone are "
+            "rejected by GitHub search).",
+        )
     limit = max(1, min(limit, 50))
     qualifiers = [query.strip()]
     if public_only:
@@ -1383,6 +1406,13 @@ async def submit_pull_request_review(
     """
     _require_token()
     _require_write()
+    if event in {"REQUEST_CHANGES", "COMMENT"} and not body:
+        raise GitHubError(
+            400,
+            "POST",
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+            f"`body` is required when event is {event}.",
+        )
     payload: dict[str, Any] = {"event": event}
     if body is not None:
         payload["body"] = body
@@ -1541,9 +1571,11 @@ async def remove_label(
     """
     _require_token()
     _require_write()
+    # Label names can contain spaces and slashes (e.g. "good first issue",
+    # "type/bug"); percent-encode the segment so the path stays correct.
     async with GitHubClient(config) as gh:
         result = await gh.delete(
-            f"/repos/{owner}/{repo}/issues/{issue_number}/labels/{label}"
+            f"/repos/{owner}/{repo}/issues/{issue_number}/labels/{quote(label, safe='')}"
         )
     remaining = (
         [lbl.get("name") for lbl in result] if isinstance(result, list) else []
