@@ -1056,3 +1056,57 @@ async def test_get_repository_tree_errors_without_default_branch(monkeypatch):
     with pytest.raises(GitHubError) as exc:
         await server.get_repository_tree("o", "r")
     assert exc.value.status_code == 404
+
+
+async def test_create_scheduled_workflow_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.create_scheduled_workflow("o", "r", "Nightly", "0 9 * * *",
+                                               "echo hi")
+    assert exc.value.status_code == 403
+
+
+async def test_create_scheduled_workflow_bad_cron(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(GitHubError) as exc:
+        await server.create_scheduled_workflow("o", "r", "x", "not cron", "echo")
+    assert exc.value.status_code == 400
+
+
+async def test_create_scheduled_workflow_commits_yaml(monkeypatch):
+    import base64
+    captured = {}
+
+    def handler(request):
+        import json
+        p = request.url.path
+        if request.method == "GET" and p == "/repos/o/r":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.method == "GET" and p.startswith("/repos/o/r/contents/"):
+            return httpx.Response(404, json={"message": "Not Found"})
+        if request.method == "PUT" and p == "/repos/o/r/contents/.github/workflows/nightly-backup.yml":
+            captured["body"] = json.loads(request.content)
+            captured["path"] = p
+            return httpx.Response(
+                201,
+                json={"content": {"path": ".github/workflows/nightly-backup.yml",
+                                  "sha": "s", "html_url": "u"},
+                      "commit": {"sha": "c"}},
+            )
+        raise AssertionError(f"unexpected {request.method} {p}")
+
+    install_mock(monkeypatch, handler)
+    result = await server.create_scheduled_workflow(
+        "o", "r", "Nightly Backup", "0 9 * * 1", "echo hi\nrun-backup.sh"
+    )
+    body = captured["body"]
+    assert body["branch"] == "main"  # defaulted to default branch
+    assert "sha" not in body  # new file
+    yaml = base64.b64decode(body["content"]).decode()
+    assert "schedule:" in yaml
+    assert 'cron: "0 9 * * 1"' in yaml
+    assert "workflow_dispatch: {}" in yaml
+    assert "run-backup.sh" in yaml
+    assert result["cron"] == "0 9 * * 1"
+    assert result["branch"] == "main"
