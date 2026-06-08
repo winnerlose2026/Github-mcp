@@ -136,10 +136,11 @@ class GitHubClient:
             return None
         return response.json()
 
-    async def delete(self, path: str) -> Any:
+    async def delete(self, path: str, *, json: dict[str, Any] | None = None) -> Any:
         # GitHub returns 204 No Content for some deletes, but a body for others
-        # (e.g. removing an issue label returns the remaining labels).
-        response = await self._request("DELETE", path)
+        # (e.g. removing an issue label returns the remaining labels). A few
+        # deletes (e.g. deleting file contents) also require a JSON body.
+        response = await self._request("DELETE", path, json=json)
         if not response.content:
             return None
         return response.json()
