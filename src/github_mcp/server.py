@@ -568,6 +568,142 @@ async def search_code(query: str, limit: int = 10) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+async def search_pull_requests(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Search pull requests across GitHub (gh search prs).
+
+    Wraps GitHub's issue search with an `is:pr` qualifier added automatically, so
+    `query` only needs the PR-specific parts, e.g.
+    `repo:octocat/hello-world is:open review:required` or `author:octocat is:merged`.
+    Returns up to `limit` (max 50) pull requests.
+    """
+    _require_token()
+    limit = max(1, min(limit, 50))
+    full_query = query if "is:pr" in query else f"is:pr {query}"
+    async with GitHubClient(config) as gh:
+        result = await gh.get(
+            "/search/issues", params={"q": full_query, "per_page": limit}
+        )
+    return [_summarize_issue(item) for item in result.get("items", [])]
+
+
+@mcp.tool()
+async def search_commits(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Search commits across GitHub (gh search commits).
+
+    Example queries: `repo:octocat/hello-world fix bug`, `author:octocat merge`,
+    `org:anthropics committer-date:>2024-01-01`. Returns up to `limit` (max 50)
+    commits.
+    """
+    _require_token()
+    limit = max(1, min(limit, 50))
+    async with GitHubClient(config) as gh:
+        result = await gh.get(
+            "/search/commits", params={"q": query, "per_page": limit}
+        )
+    return [_summarize_commit(item) for item in result.get("items", [])]
+
+
+@mcp.tool()
+async def search_users(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Search for users and organizations on GitHub (gh search users).
+
+    Example queries: `octocat`, `location:berlin language:python`,
+    `type:org anthropic`. Returns up to `limit` (max 50) accounts.
+    """
+    _require_token()
+    limit = max(1, min(limit, 50))
+    async with GitHubClient(config) as gh:
+        result = await gh.get(
+            "/search/users", params={"q": query, "per_page": limit}
+        )
+    return [
+        {
+            "login": item.get("login"),
+            "type": item.get("type"),
+            "html_url": item.get("html_url"),
+        }
+        for item in result.get("items", [])
+    ]
+
+
+@mcp.tool()
+async def list_labels(owner: str, repo: str, limit: int = 50) -> list[dict[str, Any]]:
+    """List the labels defined in a repository (gh label list).
+
+    Returns each label's name, color (hex, no leading `#`), and description, up to
+    `limit` (max 100).
+    """
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        labels = await gh.get(
+            f"/repos/{owner}/{repo}/labels", params={"per_page": limit}
+        )
+    return [
+        {
+            "name": label.get("name"),
+            "color": label.get("color"),
+            "description": label.get("description"),
+        }
+        for label in labels
+    ]
+
+
+@mcp.tool()
+async def list_tags(owner: str, repo: str, limit: int = 30) -> list[dict[str, Any]]:
+    """List git tags in a repository, with the commit SHA each points at."""
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        tags = await gh.get(f"/repos/{owner}/{repo}/tags", params={"per_page": limit})
+    return [
+        {
+            "name": tag.get("name"),
+            "sha": (tag.get("commit") or {}).get("sha"),
+        }
+        for tag in tags
+    ]
+
+
+@mcp.tool()
+async def get_tag(owner: str, repo: str, tag: str) -> dict[str, Any]:
+    """Resolve a single tag to its commit (the commit the tag ref points at).
+
+    `tag` is the tag name (e.g. `v1.2.0`). Works for both lightweight and
+    annotated tags; returns the underlying commit's SHA, message, and author.
+    """
+    _require_token()
+    async with GitHubClient(config) as gh:
+        commit = await gh.get(f"/repos/{owner}/{repo}/commits/tags/{quote(tag)}")
+    summary = _summarize_commit(commit)
+    summary["tag"] = tag
+    return summary
+
+
+@mcp.tool()
+async def list_gists(limit: int = 30) -> list[dict[str, Any]]:
+    """List the authenticated user's gists, most recent first (gh gist list)."""
+    _require_token()
+    limit = max(1, min(limit, 100))
+    async with GitHubClient(config) as gh:
+        gists = await gh.get("/gists", params={"per_page": limit})
+    return [_summarize_gist(gist) for gist in gists]
+
+
+@mcp.tool()
+async def get_latest_release(owner: str, repo: str) -> dict[str, Any]:
+    """Get a repository's latest published release (gh release view --latest).
+
+    Returns the most recent non-draft, non-prerelease release. Raises a 404 if the
+    repository has no published releases.
+    """
+    _require_token()
+    async with GitHubClient(config) as gh:
+        release = await gh.get(f"/repos/{owner}/{repo}/releases/latest")
+    return _summarize_release(release)
+
+
+@mcp.tool()
 async def list_my_repositories(
     affiliation: str = "owner,collaborator,organization_member",
     sort: str = "updated",
@@ -1718,6 +1854,93 @@ async def create_scheduled_workflow(
         "html_url": content_info.get("html_url"),
         "note": "Scheduled runs fire only from the default branch and start "
         "from the next cron tick; use trigger_workflow to run it now.",
+    }
+
+
+@mcp.tool()
+async def create_repository(
+    name: str,
+    description: str | None = None,
+    private: bool = False,
+    org: str | None = None,
+    auto_init: bool = False,
+    homepage: str | None = None,
+) -> dict[str, Any]:
+    """Create a new repository (gh repo create).
+
+    Creates the repo under the authenticated user, or under `org` if given. Set
+    `auto_init=True` to seed an initial commit with a README (so the repo has a
+    default branch you can push to immediately). Disabled in read-only mode;
+    requires a token with the `repo` scope.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {"name": name, "private": private}
+    if description is not None:
+        payload["description"] = description
+    if homepage is not None:
+        payload["homepage"] = homepage
+    if auto_init:
+        payload["auto_init"] = True
+    path = f"/orgs/{org}/repos" if org else "/user/repos"
+    async with GitHubClient(config) as gh:
+        repo = await gh.post(path, json=payload)
+    return _summarize_repo(repo)
+
+
+@mcp.tool()
+async def fork_repository(
+    owner: str,
+    repo: str,
+    organization: str | None = None,
+    default_branch_only: bool = False,
+) -> dict[str, Any]:
+    """Fork a repository to your account or an organization (gh repo fork).
+
+    Forks `owner/repo` into the authenticated account, or into `organization` if
+    given. Set `default_branch_only=True` to fork just the default branch. The
+    fork is created asynchronously by GitHub, so it may take a moment to become
+    fully available. Disabled in read-only mode; requires write access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {}
+    if organization is not None:
+        payload["organization"] = organization
+    if default_branch_only:
+        payload["default_branch_only"] = True
+    async with GitHubClient(config) as gh:
+        fork = await gh.post(f"/repos/{owner}/{repo}/forks", json=payload)
+    return _summarize_repo(fork)
+
+
+@mcp.tool()
+async def create_label(
+    owner: str,
+    repo: str,
+    name: str,
+    color: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Create a label in a repository (gh label create).
+
+    `color` is a 6-character hex code without the leading `#` (e.g. `d73a4a`); if
+    omitted GitHub assigns a default. Disabled in read-only mode; requires write
+    access.
+    """
+    _require_token()
+    _require_write()
+    payload: dict[str, Any] = {"name": name}
+    if color is not None:
+        payload["color"] = color.lstrip("#")
+    if description is not None:
+        payload["description"] = description
+    async with GitHubClient(config) as gh:
+        label = await gh.post(f"/repos/{owner}/{repo}/labels", json=payload)
+    return {
+        "name": label.get("name"),
+        "color": label.get("color"),
+        "description": label.get("description"),
     }
 
 
