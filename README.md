@@ -24,7 +24,7 @@ Enterprise Server.
 - ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch/**schedule** workflows, commit statuses & check runs, list/create releases
 - 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts
 - 🔔 **Notifications** — list and mark read across all your repos
-- ✍️ **Repo writes** — create/fork repos, create branches, commit files, manage labels/assignees, create gists (gated by read-only mode)
+- ✍️ **Repo writes** — create/fork repos, create branches, commit/delete files, manage labels (create/edit/delete) & assignees, request PR reviewers, create/edit gists (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
 - 🏢 **Enterprise-friendly** — set `GITHUB_API_URL` for GitHub Enterprise Server
 
@@ -71,6 +71,8 @@ Enterprise Server.
 | `get_tag` | Resolve a tag to its commit | |
 | `list_gists` | The authenticated user's gists | |
 | `get_latest_release` | A repository's latest published release | |
+| `get_release_by_tag` | A specific release by tag (incl. drafts) | |
+| `get_gist` | A single gist with file contents | |
 | `find_reusable_repositories` | Find reusable repos for what you're building (license/activity-aware; public + accessible private) | |
 | `create_pull_request` | Open a new pull request (supports draft) | ✅ |
 | `update_pull_request` | Edit title/body/base, close/reopen a PR | ✅ |
@@ -91,10 +93,15 @@ Enterprise Server.
 | `create_branch` | Create a branch from a ref | ✅ |
 | `delete_branch` | Delete a branch | ✅ |
 | `create_or_update_file` | Commit a file (create or update) | ✅ |
+| `delete_file` | Delete a file in a single commit | ✅ |
 | `create_gist` | Create a (secret or public) gist | ✅ |
+| `update_gist` | Edit a gist's files/description | ✅ |
 | `create_repository` | Create a new repo (user or org) | ✅ |
 | `fork_repository` | Fork a repo to your account/an org | ✅ |
 | `create_label` | Create a label in a repository | ✅ |
+| `update_label` | Edit/rename a label | ✅ |
+| `delete_label` | Delete a label | ✅ |
+| `request_pull_request_reviewers` | Request user/team reviews on a PR | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 

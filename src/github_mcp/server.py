@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import re
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import quote
 
@@ -62,6 +63,27 @@ def _require_write() -> None:
             "This connector is running in read-only mode "
             "(GITHUB_MCP_READ_ONLY is set); write operations are disabled.",
         )
+
+
+def _clamp(limit: int, ceiling: int = 100) -> int:
+    """Clamp a caller-supplied `limit` into the 1..ceiling range GitHub accepts."""
+    return max(1, min(limit, ceiling))
+
+
+@asynccontextmanager
+async def _session(*, write: bool = False):
+    """Enforce auth, then yield a GitHub client.
+
+    Every tool runs through this: it requires a configured token, additionally
+    requires write access when `write=True`, and opens (and cleanly closes) a
+    :class:`GitHubClient`. Centralizes the auth policy that used to be repeated
+    at the top of each tool.
+    """
+    _require_token()
+    if write:
+        _require_write()
+    async with GitHubClient(config) as gh:
+        yield gh
 
 
 def _summarize_repo(repo: dict[str, Any]) -> dict[str, Any]:
@@ -302,8 +324,7 @@ async def get_authenticated_user() -> dict[str, Any]:
     Useful as a connection/health check and to confirm which identity and
     permissions the connector is operating with.
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         user = await gh.get("/user")
     return {
         "login": user.get("login"),
@@ -321,9 +342,8 @@ async def search_repositories(query: str, limit: int = 10) -> list[dict[str, Any
     `query` accepts GitHub search syntax, e.g. `language:python topic:mcp` or
     `org:anthropics stars:>100`. Returns up to `limit` (max 50) repositories.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         result = await gh.get(
             "/search/repositories", params={"q": query, "per_page": limit}
         )
@@ -333,8 +353,7 @@ async def search_repositories(query: str, limit: int = 10) -> list[dict[str, Any
 @mcp.tool()
 async def get_repository(owner: str, repo: str) -> dict[str, Any]:
     """Get metadata for a single repository (description, default branch, stars, etc.)."""
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         data = await gh.get(f"/repos/{owner}/{repo}")
     return _summarize_repo(data)
 
@@ -342,9 +361,8 @@ async def get_repository(owner: str, repo: str) -> dict[str, Any]:
 @mcp.tool()
 async def list_branches(owner: str, repo: str, limit: int = 30) -> list[dict[str, Any]]:
     """List branches in a repository, with the head commit SHA for each."""
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         branches = await gh.get(
             f"/repos/{owner}/{repo}/branches", params={"per_page": limit}
         )
@@ -369,8 +387,7 @@ async def get_file_contents(
     file the decoded text content is returned; for a directory a listing is
     returned instead.
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         data = await gh.get(
             f"/repos/{owner}/{repo}/contents/{path}", params={"ref": ref}
         )
@@ -424,9 +441,8 @@ async def list_commits(
     Optionally narrow to a branch/SHA via `sha` or to commits touching a single
     file via `path`. Returns up to `limit` (max 50) commits.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         commits = await gh.get(
             f"/repos/{owner}/{repo}/commits",
             params={"sha": sha, "path": path, "per_page": limit},
@@ -448,9 +464,8 @@ async def list_issues(
     comma-separated list of label names to filter by. Note: GitHub's issues
     endpoint also returns pull requests; check `is_pull_request` on each item.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         issues = await gh.get(
             f"/repos/{owner}/{repo}/issues",
             params={"state": state, "labels": labels, "per_page": limit},
@@ -461,8 +476,7 @@ async def list_issues(
 @mcp.tool()
 async def get_issue(owner: str, repo: str, issue_number: int) -> dict[str, Any]:
     """Get a single issue including its full body text."""
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         issue = await gh.get(f"/repos/{owner}/{repo}/issues/{issue_number}")
     summary = _summarize_issue(issue)
     summary["body"] = issue.get("body")
@@ -478,9 +492,8 @@ async def list_pull_requests(
     `state` is one of `open`, `closed`, or `all`. Returns up to `limit`
     (max 50) pull requests.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         pulls = await gh.get(
             f"/repos/{owner}/{repo}/pulls",
             params={"state": state, "per_page": limit},
@@ -493,8 +506,7 @@ async def get_pull_request(
     owner: str, repo: str, pull_number: int
 ) -> dict[str, Any]:
     """Get a single pull request including its body and merge status."""
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         pull = await gh.get(f"/repos/{owner}/{repo}/pulls/{pull_number}")
     summary = _summarize_pull(pull)
     summary["body"] = pull.get("body")
@@ -510,8 +522,7 @@ async def get_pull_request_diff(
     The diff is truncated to `max_chars` characters to stay within context
     limits; `truncated` indicates whether anything was cut off.
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         diff = await gh.get_raw(
             f"/repos/{owner}/{repo}/pulls/{pull_number}",
             accept="application/vnd.github.diff",
@@ -531,9 +542,8 @@ async def search_issues(query: str, limit: int = 10) -> list[dict[str, Any]]:
     Example queries: `repo:octocat/hello-world is:open label:bug`,
     `is:pr author:octocat is:merged`. Returns up to `limit` (max 50) results.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         result = await gh.get(
             "/search/issues",
             params={"q": query, "per_page": limit},
@@ -549,9 +559,8 @@ async def search_code(query: str, limit: int = 10) -> list[dict[str, Any]]:
     `org:`, or `user:` qualifier is usually required by GitHub's code search.
     Returns up to `limit` (max 50) matching files.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         result = await gh.get(
             "/search/code",
             params={"q": query, "per_page": limit},
@@ -576,10 +585,9 @@ async def search_pull_requests(query: str, limit: int = 10) -> list[dict[str, An
     `repo:octocat/hello-world is:open review:required` or `author:octocat is:merged`.
     Returns up to `limit` (max 50) pull requests.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
+    limit = _clamp(limit, 50)
     full_query = query if "is:pr" in query else f"is:pr {query}"
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         result = await gh.get(
             "/search/issues", params={"q": full_query, "per_page": limit}
         )
@@ -594,9 +602,8 @@ async def search_commits(query: str, limit: int = 10) -> list[dict[str, Any]]:
     `org:anthropics committer-date:>2024-01-01`. Returns up to `limit` (max 50)
     commits.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         result = await gh.get(
             "/search/commits", params={"q": query, "per_page": limit}
         )
@@ -610,9 +617,8 @@ async def search_users(query: str, limit: int = 10) -> list[dict[str, Any]]:
     Example queries: `octocat`, `location:berlin language:python`,
     `type:org anthropic`. Returns up to `limit` (max 50) accounts.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         result = await gh.get(
             "/search/users", params={"q": query, "per_page": limit}
         )
@@ -633,9 +639,8 @@ async def list_labels(owner: str, repo: str, limit: int = 50) -> list[dict[str, 
     Returns each label's name, color (hex, no leading `#`), and description, up to
     `limit` (max 100).
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         labels = await gh.get(
             f"/repos/{owner}/{repo}/labels", params={"per_page": limit}
         )
@@ -652,9 +657,8 @@ async def list_labels(owner: str, repo: str, limit: int = 50) -> list[dict[str, 
 @mcp.tool()
 async def list_tags(owner: str, repo: str, limit: int = 30) -> list[dict[str, Any]]:
     """List git tags in a repository, with the commit SHA each points at."""
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         tags = await gh.get(f"/repos/{owner}/{repo}/tags", params={"per_page": limit})
     return [
         {
@@ -672,9 +676,10 @@ async def get_tag(owner: str, repo: str, tag: str) -> dict[str, Any]:
     `tag` is the tag name (e.g. `v1.2.0`). Works for both lightweight and
     annotated tags; returns the underlying commit's SHA, message, and author.
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
-        commit = await gh.get(f"/repos/{owner}/{repo}/commits/tags/{quote(tag)}")
+    async with _session() as gh:
+        commit = await gh.get(
+            f"/repos/{owner}/{repo}/commits/tags/{quote(tag, safe='/')}"
+        )
     summary = _summarize_commit(commit)
     summary["tag"] = tag
     return summary
@@ -683,9 +688,8 @@ async def get_tag(owner: str, repo: str, tag: str) -> dict[str, Any]:
 @mcp.tool()
 async def list_gists(limit: int = 30) -> list[dict[str, Any]]:
     """List the authenticated user's gists, most recent first (gh gist list)."""
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         gists = await gh.get("/gists", params={"per_page": limit})
     return [_summarize_gist(gist) for gist in gists]
 
@@ -697,10 +701,39 @@ async def get_latest_release(owner: str, repo: str) -> dict[str, Any]:
     Returns the most recent non-draft, non-prerelease release. Raises a 404 if the
     repository has no published releases.
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         release = await gh.get(f"/repos/{owner}/{repo}/releases/latest")
     return _summarize_release(release)
+
+
+@mcp.tool()
+async def get_release_by_tag(owner: str, repo: str, tag: str) -> dict[str, Any]:
+    """Get a release by its tag name (gh release view <tag>).
+
+    `tag` is the release's tag (e.g. `v1.2.0`). Unlike `get_latest_release`, this
+    finds a specific release even if it's a draft or prerelease. Raises a 404 if
+    no release exists for the tag.
+    """
+    async with _session() as gh:
+        release = await gh.get(f"/repos/{owner}/{repo}/releases/tags/{quote(tag, safe='/')}")
+    return _summarize_release(release)
+
+
+@mcp.tool()
+async def get_gist(gist_id: str) -> dict[str, Any]:
+    """Get a single gist, including each file's content (gh gist view).
+
+    Returns the gist's metadata plus a `files` mapping of filename to its text
+    content. Large files may be truncated by GitHub.
+    """
+    async with _session() as gh:
+        gist = await gh.get(f"/gists/{gist_id}")
+    summary = _summarize_gist(gist)
+    summary["files"] = {
+        name: info.get("content")
+        for name, info in (gist.get("files") or {}).items()
+    }
+    return summary
 
 
 @mcp.tool()
@@ -716,9 +749,8 @@ async def list_my_repositories(
     `full_name`. Returns up to `limit` (max 100) repositories. Use this to
     discover repos the token can reach without knowing their names.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         repos = await gh.get(
             "/user/repos",
             params={"affiliation": affiliation, "sort": sort, "per_page": limit},
@@ -733,8 +765,7 @@ async def get_commit(owner: str, repo: str, ref: str) -> dict[str, Any]:
     `ref` is a commit SHA, branch, or tag. Returns the commit metadata plus
     aggregate additions/deletions and a per-file summary (no patch text).
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         commit = await gh.get(f"/repos/{owner}/{repo}/commits/{ref}")
     summary = _summarize_commit(commit)
     summary["stats"] = commit.get("stats")
@@ -752,8 +783,7 @@ async def compare_commits(
     in between, and the files changed. Useful for "what's on this branch that
     isn't on main" or reviewing a range.
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         result = await gh.get(f"/repos/{owner}/{repo}/compare/{base}...{head}")
     return {
         "status": result.get("status"),
@@ -775,9 +805,8 @@ async def list_pull_request_files(
     Returns each file's path, status (added/modified/removed/renamed), and
     line counts. Returns up to `limit` (max 100) files.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         files = await gh.get(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/files",
             params={"per_page": limit},
@@ -799,9 +828,8 @@ async def list_workflow_runs(
     `in_progress`, `queued`, `failure`, `success`). Returns up to `limit`
     (max 50) runs, newest first.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         result = await gh.get(
             f"/repos/{owner}/{repo}/actions/runs",
             params={"branch": branch, "status": status, "per_page": limit},
@@ -818,9 +846,8 @@ async def list_releases(
     Returns up to `limit` (max 50) releases with tag, name, draft/prerelease
     flags, and publish date.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         releases = await gh.get(
             f"/repos/{owner}/{repo}/releases", params={"per_page": limit}
         )
@@ -838,9 +865,8 @@ async def list_workflow_run_jobs(
     `latest` (default) or `all` (include earlier attempts). Returns up to `limit`
     (max 100) jobs.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         result = await gh.get(
             f"/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
             params={"filter": filter, "per_page": limit},
@@ -859,8 +885,7 @@ async def get_job_logs(
     (where failures usually are), otherwise the beginning. `truncated` indicates
     whether anything was cut.
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         text = await gh.get_raw(
             f"/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
             accept="application/vnd.github+json",
@@ -879,9 +904,8 @@ async def list_pull_request_reviews(
     Returns each review's author, `state` (e.g. `APPROVED`, `CHANGES_REQUESTED`,
     `COMMENTED`, `DISMISSED`), and body. Returns up to `limit` (max 100) reviews.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         reviews = await gh.get(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
             params={"per_page": limit},
@@ -900,9 +924,8 @@ async def list_secret_scanning_alerts(
     access to security alerts (repo admin / `security_events`); GitHub returns
     403/404 otherwise. Returns up to `limit` (max 100) alerts.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         alerts = await gh.get(
             f"/repos/{owner}/{repo}/secret-scanning/alerts",
             params={"state": state, "per_page": limit},
@@ -920,9 +943,8 @@ async def list_issue_comments(
     use `list_pull_request_review_comments` for those). Returns up to `limit`
     (max 100) comments.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         comments = await gh.get(
             f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
             params={"per_page": limit},
@@ -939,9 +961,8 @@ async def list_pull_request_review_comments(
     These are comments anchored to specific files/lines in the diff (each
     includes `path` and `line`). Returns up to `limit` (max 100) comments.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         comments = await gh.get(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/comments",
             params={"per_page": limit},
@@ -960,9 +981,8 @@ async def list_notifications(
     participating in. Each item's `id` is the thread id for
     `mark_notification_read`. Returns up to `limit` (max 50) notifications.
     """
-    _require_token()
-    limit = max(1, min(limit, 50))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
         notifications = await gh.get(
             "/notifications",
             params={"all": all, "participating": participating, "per_page": limit},
@@ -978,8 +998,7 @@ async def get_combined_status(owner: str, repo: str, ref: str) -> dict[str, Any]
     individual status context. This covers the legacy "statuses" API; for
     GitHub Actions checks use `list_check_runs`.
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         data = await gh.get(f"/repos/{owner}/{repo}/commits/{ref}/status")
     return {
         "state": data.get("state"),
@@ -1006,9 +1025,8 @@ async def list_check_runs(
     inspect CI on any ref without going through a pull request. Returns up to
     `limit` (max 100) check runs.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         result = await gh.get(
             f"/repos/{owner}/{repo}/commits/{ref}/check-runs",
             params={"per_page": limit},
@@ -1027,8 +1045,7 @@ async def get_repository_tree(
     call — useful for grasping repo layout. `truncated` is True if GitHub capped
     the response (very large repos).
     """
-    _require_token()
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         if ref is None:
             repo_data = await gh.get(f"/repos/{owner}/{repo}")
             ref = repo_data.get("default_branch")
@@ -1073,9 +1090,8 @@ async def list_code_scanning_alerts(
     alert's rule, severity, and tool. Requires a token with access to security
     alerts. Returns up to `limit` (max 100) alerts.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         alerts = await gh.get(
             f"/repos/{owner}/{repo}/code-scanning/alerts",
             params={"state": state, "per_page": limit},
@@ -1094,9 +1110,8 @@ async def list_dependabot_alerts(
     a token with access to security alerts. Returns up to `limit` (max 100)
     alerts.
     """
-    _require_token()
-    limit = max(1, min(limit, 100))
-    async with GitHubClient(config) as gh:
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
         alerts = await gh.get(
             f"/repos/{owner}/{repo}/dependabot/alerts",
             params={"state": state, "per_page": limit},
@@ -1140,7 +1155,6 @@ async def find_reusable_repositories(
 
     Returns up to `limit` (max 50) candidates.
     """
-    _require_token()
     if not query.strip():
         raise GitHubError(
             400,
@@ -1149,7 +1163,7 @@ async def find_reusable_repositories(
             "`query` must be a non-empty search phrase (qualifiers alone are "
             "rejected by GitHub search).",
         )
-    limit = max(1, min(limit, 50))
+    limit = _clamp(limit, 50)
     qualifiers = [query.strip()]
     if public_only:
         qualifiers.append("is:public")
@@ -1162,7 +1176,7 @@ async def find_reusable_repositories(
     if not include_archived:
         qualifiers.append("archived:false")
     q = " ".join(qualifiers)
-    async with GitHubClient(config) as gh:
+    async with _session() as gh:
         result = await gh.get(
             "/search/repositories",
             params={"q": q, "sort": "stars", "order": "desc", "per_page": limit},
@@ -1208,14 +1222,12 @@ async def create_issue(
     Disabled when the connector runs in read-only mode. Requires a token with
     write access to the repository.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {"title": title}
     if body is not None:
         payload["body"] = body
     if labels:
         payload["labels"] = labels
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         issue = await gh.post(f"/repos/{owner}/{repo}/issues", json=payload)
     summary = _summarize_issue(issue)
     summary["body"] = issue.get("body")
@@ -1231,9 +1243,7 @@ async def add_issue_comment(
     Disabled when the connector runs in read-only mode. Requires a token with
     write access to the repository.
     """
-    _require_token()
-    _require_write()
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         comment = await gh.post(
             f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
             json={"body": body},
@@ -1262,8 +1272,6 @@ async def update_issue(
     fields you provide are changed. Disabled in read-only mode; requires a token
     with write access.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {}
     if title is not None:
         payload["title"] = title
@@ -1280,7 +1288,7 @@ async def update_issue(
             f"/repos/{owner}/{repo}/issues/{issue_number}",
             "Nothing to update: provide at least one of title, body, state, labels.",
         )
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         issue = await gh.patch(
             f"/repos/{owner}/{repo}/issues/{issue_number}", json=payload
         )
@@ -1299,9 +1307,7 @@ async def create_branch(
     it starts at the repository's default branch. Disabled in read-only mode;
     requires a token with write access.
     """
-    _require_token()
-    _require_write()
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         if from_ref is None:
             repo_data = await gh.get(f"/repos/{owner}/{repo}")
             from_ref = repo_data.get("default_branch")
@@ -1328,9 +1334,7 @@ async def delete_branch(owner: str, repo: str, branch: str) -> dict[str, Any]:
     branch (GitHub rejects that). Disabled in read-only mode; requires a token
     with write access.
     """
-    _require_token()
-    _require_write()
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         await gh.delete(f"/repos/{owner}/{repo}/git/refs/heads/{branch}")
     return {"deleted": True, "branch": branch}
 
@@ -1353,13 +1357,11 @@ async def create_or_update_file(
     up automatically for the target branch. Disabled in read-only mode; requires
     a token with write access.
     """
-    _require_token()
-    _require_write()
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
     payload: dict[str, Any] = {"message": message, "content": encoded}
     if branch is not None:
         payload["branch"] = branch
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         if sha is None:
             # If the file already exists, GitHub requires its current blob sha.
             try:
@@ -1406,8 +1408,6 @@ async def create_pull_request(
     Set `draft=True` to open it as a draft. Disabled in read-only mode; requires
     a token with write access to the repository.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {
         "title": title,
         "head": head,
@@ -1417,7 +1417,7 @@ async def create_pull_request(
     }
     if body is not None:
         payload["body"] = body
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         pull = await gh.post(f"/repos/{owner}/{repo}/pulls", json=payload)
     summary = _summarize_pull(pull)
     summary["body"] = pull.get("body")
@@ -1441,14 +1441,12 @@ async def merge_pull_request(
     required checks, or branch protection). Disabled in read-only mode; requires
     a token with write access.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {"merge_method": merge_method}
     if commit_title is not None:
         payload["commit_title"] = commit_title
     if commit_message is not None:
         payload["commit_message"] = commit_message
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         result = await gh.put(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/merge", json=payload
         )
@@ -1469,10 +1467,8 @@ async def rerun_workflow_run(
     run is re-run. Get `run_id` from `list_workflow_runs`. Disabled in read-only
     mode; requires a token with write access.
     """
-    _require_token()
-    _require_write()
     endpoint = "rerun-failed-jobs" if failed_only else "rerun"
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         await gh.post(
             f"/repos/{owner}/{repo}/actions/runs/{run_id}/{endpoint}", json={}
         )
@@ -1505,8 +1501,6 @@ async def create_release(
     handy for triggering release workflows. Disabled in read-only mode; requires
     a token with write access.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {
         "tag_name": tag_name,
         "draft": draft,
@@ -1519,7 +1513,7 @@ async def create_release(
         payload["name"] = name
     if body is not None:
         payload["body"] = body
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         release = await gh.post(f"/repos/{owner}/{repo}/releases", json=payload)
     summary = _summarize_release(release)
     summary["id"] = release.get("id")
@@ -1541,8 +1535,6 @@ async def submit_pull_request_review(
     summary text (required by GitHub for `REQUEST_CHANGES` and `COMMENT`).
     Disabled in read-only mode; requires write access.
     """
-    _require_token()
-    _require_write()
     if event in {"REQUEST_CHANGES", "COMMENT"} and not body:
         raise GitHubError(
             400,
@@ -1553,7 +1545,7 @@ async def submit_pull_request_review(
     payload: dict[str, Any] = {"event": event}
     if body is not None:
         payload["body"] = body
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         review = await gh.post(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/reviews", json=payload
         )
@@ -1578,8 +1570,6 @@ async def add_pull_request_review_comment(
     version, default) or `LEFT` (the old version). Disabled in read-only mode;
     requires write access.
     """
-    _require_token()
-    _require_write()
     payload = {
         "body": body,
         "commit_id": commit_id,
@@ -1587,7 +1577,7 @@ async def add_pull_request_review_comment(
         "line": line,
         "side": side,
     }
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         comment = await gh.post(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/comments", json=payload
         )
@@ -1611,8 +1601,6 @@ async def update_pull_request(
     draft↔ready isn't supported by the REST API.) Disabled in read-only mode;
     requires write access.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {}
     if title is not None:
         payload["title"] = title
@@ -1629,7 +1617,7 @@ async def update_pull_request(
             f"/repos/{owner}/{repo}/pulls/{pull_number}",
             "Nothing to update: provide at least one of title, body, state, base.",
         )
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         pull = await gh.patch(
             f"/repos/{owner}/{repo}/pulls/{pull_number}", json=payload
         )
@@ -1645,9 +1633,7 @@ async def mark_notification_read(thread_id: str) -> dict[str, Any]:
     `thread_id` is the `id` from `list_notifications`. Disabled in read-only
     mode; requires write access.
     """
-    _require_token()
-    _require_write()
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         await gh.patch(f"/notifications/threads/{thread_id}", json={})
     return {"marked_read": True, "thread_id": thread_id}
 
@@ -1667,12 +1653,10 @@ async def trigger_workflow(
     workflow's declared inputs. The workflow must define an `on: workflow_dispatch`
     trigger. Disabled in read-only mode; requires write access.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {"ref": ref}
     if inputs:
         payload["inputs"] = inputs
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         await gh.post(
             f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
             json=payload,
@@ -1688,9 +1672,7 @@ async def add_labels(
 
     Disabled in read-only mode; requires write access.
     """
-    _require_token()
-    _require_write()
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         result = await gh.post(
             f"/repos/{owner}/{repo}/issues/{issue_number}/labels",
             json={"labels": labels},
@@ -1706,11 +1688,9 @@ async def remove_label(
 
     Disabled in read-only mode; requires write access.
     """
-    _require_token()
-    _require_write()
     # Label names can contain spaces and slashes (e.g. "good first issue",
     # "type/bug"); percent-encode the segment so the path stays correct.
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         result = await gh.delete(
             f"/repos/{owner}/{repo}/issues/{issue_number}/labels/{quote(label, safe='')}"
         )
@@ -1729,9 +1709,7 @@ async def add_assignees(
     `assignees` is a list of GitHub logins. Disabled in read-only mode; requires
     write access.
     """
-    _require_token()
-    _require_write()
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         result = await gh.post(
             f"/repos/{owner}/{repo}/issues/{issue_number}/assignees",
             json={"assignees": assignees},
@@ -1752,15 +1730,13 @@ async def create_gist(
     `public=False` (default) creates a secret gist. Disabled in read-only mode;
     requires write access.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {
         "public": public,
         "files": {name: {"content": content} for name, content in files.items()},
     }
     if description is not None:
         payload["description"] = description
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         gist = await gh.post("/gists", json=payload)
     return _summarize_gist(gist)
 
@@ -1791,8 +1767,6 @@ async def create_scheduled_workflow(
     Disabled in read-only mode; requires write access (and the token needs the
     `workflow` scope to add workflow files).
     """
-    _require_token()
-    _require_write()
     if len(cron.split()) != 5:
         raise GitHubError(
             400,
@@ -1823,7 +1797,7 @@ async def create_scheduled_workflow(
     )
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
     commit_message = message or f"Add scheduled workflow: {name}"
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         if branch is None:
             repo_data = await gh.get(f"/repos/{owner}/{repo}")
             branch = repo_data.get("default_branch")
@@ -1873,8 +1847,6 @@ async def create_repository(
     default branch you can push to immediately). Disabled in read-only mode;
     requires a token with the `repo` scope.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {"name": name, "private": private}
     if description is not None:
         payload["description"] = description
@@ -1883,7 +1855,7 @@ async def create_repository(
     if auto_init:
         payload["auto_init"] = True
     path = f"/orgs/{org}/repos" if org else "/user/repos"
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         repo = await gh.post(path, json=payload)
     return _summarize_repo(repo)
 
@@ -1902,14 +1874,12 @@ async def fork_repository(
     fork is created asynchronously by GitHub, so it may take a moment to become
     fully available. Disabled in read-only mode; requires write access.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {}
     if organization is not None:
         payload["organization"] = organization
     if default_branch_only:
         payload["default_branch_only"] = True
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         fork = await gh.post(f"/repos/{owner}/{repo}/forks", json=payload)
     return _summarize_repo(fork)
 
@@ -1928,19 +1898,161 @@ async def create_label(
     omitted GitHub assigns a default. Disabled in read-only mode; requires write
     access.
     """
-    _require_token()
-    _require_write()
     payload: dict[str, Any] = {"name": name}
     if color is not None:
         payload["color"] = color.lstrip("#")
     if description is not None:
         payload["description"] = description
-    async with GitHubClient(config) as gh:
+    async with _session(write=True) as gh:
         label = await gh.post(f"/repos/{owner}/{repo}/labels", json=payload)
     return {
         "name": label.get("name"),
         "color": label.get("color"),
         "description": label.get("description"),
+    }
+
+
+@mcp.tool()
+async def update_label(
+    owner: str,
+    repo: str,
+    name: str,
+    new_name: str | None = None,
+    color: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Edit an existing label (gh label edit).
+
+    `name` selects the label to change; pass `new_name` to rename it, and/or
+    `color` (6-char hex, leading `#` optional) and `description` to update those.
+    Disabled in read-only mode; requires write access.
+    """
+    payload: dict[str, Any] = {}
+    if new_name is not None:
+        payload["new_name"] = new_name
+    if color is not None:
+        payload["color"] = color.lstrip("#")
+    if description is not None:
+        payload["description"] = description
+    async with _session(write=True) as gh:
+        label = await gh.patch(
+            f"/repos/{owner}/{repo}/labels/{quote(name)}", json=payload
+        )
+    return {
+        "name": label.get("name"),
+        "color": label.get("color"),
+        "description": label.get("description"),
+    }
+
+
+@mcp.tool()
+async def delete_label(owner: str, repo: str, name: str) -> dict[str, Any]:
+    """Delete a label from a repository (gh label delete).
+
+    Removes the label `name` and unsets it from every issue/PR that had it. This
+    cannot be undone. Disabled in read-only mode; requires write access.
+    """
+    async with _session(write=True) as gh:
+        await gh.delete(f"/repos/{owner}/{repo}/labels/{quote(name)}")
+    return {"deleted": True, "name": name}
+
+
+@mcp.tool()
+async def delete_file(
+    owner: str,
+    repo: str,
+    path: str,
+    message: str,
+    branch: str | None = None,
+    sha: str | None = None,
+) -> dict[str, Any]:
+    """Delete a file from a repository in a single commit.
+
+    `message` is the commit message. `branch` defaults to the repository's
+    default branch. Deleting requires the file's current blob `sha`; if you don't
+    pass it, this tool looks it up for the target branch. Disabled in read-only
+    mode; requires write access.
+    """
+    params = {"ref": branch} if branch is not None else None
+    payload: dict[str, Any] = {"message": message}
+    if branch is not None:
+        payload["branch"] = branch
+    async with _session(write=True) as gh:
+        if sha is None:
+            existing = await gh.get(
+                f"/repos/{owner}/{repo}/contents/{path}", params=params
+            )
+            if isinstance(existing, dict):
+                sha = existing.get("sha")
+        payload["sha"] = sha
+        result = await gh.delete(
+            f"/repos/{owner}/{repo}/contents/{path}", json=payload
+        )
+    commit = (result or {}).get("commit", {})
+    return {"deleted": True, "path": path, "commit_sha": commit.get("sha")}
+
+
+@mcp.tool()
+async def update_gist(
+    gist_id: str,
+    files: dict[str, str],
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Update a gist's files and/or description (gh gist edit).
+
+    `files` maps filename to new content; an existing filename overwrites that
+    file, a new filename adds one. (To rename or delete files, use the gist on
+    GitHub.) Disabled in read-only mode; requires write access.
+    """
+    payload: dict[str, Any] = {
+        "files": {name: {"content": content} for name, content in files.items()}
+    }
+    if description is not None:
+        payload["description"] = description
+    async with _session(write=True) as gh:
+        gist = await gh.patch(f"/gists/{gist_id}", json=payload)
+    return _summarize_gist(gist)
+
+
+@mcp.tool()
+async def request_pull_request_reviewers(
+    owner: str,
+    repo: str,
+    pull_number: int,
+    reviewers: list[str] | None = None,
+    team_reviewers: list[str] | None = None,
+) -> dict[str, Any]:
+    """Request reviews on a pull request (gh pr edit --add-reviewer).
+
+    `reviewers` is a list of usernames; `team_reviewers` a list of team slugs.
+    At least one of the two must be provided. Disabled in read-only mode;
+    requires write access.
+    """
+    if not reviewers and not team_reviewers:
+        raise GitHubError(
+            400,
+            "REVIEWERS",
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
+            "Provide at least one of `reviewers` or `team_reviewers`.",
+        )
+    payload: dict[str, Any] = {}
+    if reviewers:
+        payload["reviewers"] = reviewers
+    if team_reviewers:
+        payload["team_reviewers"] = team_reviewers
+    async with _session(write=True) as gh:
+        pull = await gh.post(
+            f"/repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
+            json=payload,
+        )
+    return {
+        "number": pull.get("number"),
+        "requested_reviewers": [
+            r.get("login") for r in pull.get("requested_reviewers", [])
+        ],
+        "requested_teams": [
+            t.get("slug") for t in pull.get("requested_teams", [])
+        ],
     }
 
 

@@ -1285,3 +1285,153 @@ async def test_create_label_strips_hash(monkeypatch):
     result = await server.create_label("o", "r", "bug", color="#d73a4a")
     assert captured["body"]["color"] == "d73a4a"  # leading # stripped
     assert result["name"] == "bug"
+
+
+# --- streamline + new alt tools --------------------------------------------
+
+
+async def test_get_release_by_tag(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/releases/tags/v1.2.0"
+        return httpx.Response(200, json={"tag_name": "v1.2.0", "name": "v1.2.0",
+                                         "draft": False, "prerelease": False})
+
+    install_mock(monkeypatch, handler)
+    result = await server.get_release_by_tag("o", "r", "v1.2.0")
+    assert result["tag_name"] == "v1.2.0"
+
+
+async def test_get_tag_allows_slashes(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["path"] = request.url.path
+        return httpx.Response(200, json={"sha": "abc",
+                                         "commit": {"message": "m",
+                                                    "author": {"name": "JD"}}})
+
+    install_mock(monkeypatch, handler)
+    await server.get_tag("o", "r", "release/1.0")
+    assert captured["path"] == "/repos/o/r/commits/tags/release/1.0"
+
+
+async def test_get_gist_includes_content(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/gists/g1"
+        return httpx.Response(200, json={"id": "g1", "description": "d",
+                                         "public": True, "html_url": "u",
+                                         "files": {"a.txt": {"content": "hello"}}})
+
+    install_mock(monkeypatch, handler)
+    result = await server.get_gist("g1")
+    assert result["files"]["a.txt"] == "hello"
+
+
+async def test_update_label(monkeypatch):
+    import json
+    captured = {}
+
+    def handler(request):
+        assert request.method == "PATCH"
+        assert request.url.path == "/repos/o/r/labels/bug"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"name": "defect", "color": "ff0000",
+                                         "description": "x"})
+
+    install_mock(monkeypatch, handler)
+    result = await server.update_label("o", "r", "bug", new_name="defect",
+                                       color="#ff0000")
+    assert captured["body"]["new_name"] == "defect"
+    assert captured["body"]["color"] == "ff0000"
+    assert result["name"] == "defect"
+
+
+async def test_delete_label(monkeypatch):
+    def handler(request):
+        assert request.method == "DELETE"
+        assert request.url.path == "/repos/o/r/labels/bug"
+        return httpx.Response(204)
+
+    install_mock(monkeypatch, handler)
+    result = await server.delete_label("o", "r", "bug")
+    assert result == {"deleted": True, "name": "bug"}
+
+
+async def test_delete_label_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.delete_label("o", "r", "bug")
+    assert exc.value.status_code == 403
+
+
+async def test_delete_file_looks_up_sha(monkeypatch):
+    import json
+    captured = {}
+
+    def handler(request):
+        p = request.url.path
+        if request.method == "GET" and p == "/repos/o/r/contents/old.txt":
+            return httpx.Response(200, json={"sha": "blobsha"})
+        if request.method == "DELETE" and p == "/repos/o/r/contents/old.txt":
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"commit": {"sha": "c1"}})
+        raise AssertionError(f"unexpected {request.method} {p}")
+
+    install_mock(monkeypatch, handler)
+    result = await server.delete_file("o", "r", "old.txt", "remove it")
+    assert captured["body"]["sha"] == "blobsha"  # auto-looked up
+    assert result["commit_sha"] == "c1"
+
+
+async def test_update_gist(monkeypatch):
+    import json
+    captured = {}
+
+    def handler(request):
+        assert request.method == "PATCH"
+        assert request.url.path == "/gists/g1"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "g1", "description": "new",
+                                         "public": False, "files": {"a": {}},
+                                         "html_url": "u"})
+
+    install_mock(monkeypatch, handler)
+    result = await server.update_gist("g1", {"a.txt": "new content"},
+                                      description="new")
+    assert captured["body"]["files"]["a.txt"]["content"] == "new content"
+    assert result["id"] == "g1"
+
+
+async def test_request_reviewers_requires_one(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(GitHubError) as exc:
+        await server.request_pull_request_reviewers("o", "r", 5)
+    assert exc.value.status_code == 400
+
+
+async def test_request_reviewers(monkeypatch):
+    import json
+    captured = {}
+
+    def handler(request):
+        assert request.url.path == "/repos/o/r/pulls/5/requested_reviewers"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"number": 5,
+                                         "requested_reviewers": [{"login": "jd"}],
+                                         "requested_teams": []})
+
+    install_mock(monkeypatch, handler)
+    result = await server.request_pull_request_reviewers("o", "r", 5,
+                                                         reviewers=["jd"])
+    assert captured["body"]["reviewers"] == ["jd"]
+    assert result["requested_reviewers"] == ["jd"]
+
+
+async def test_session_requires_token_first(monkeypatch):
+    # The _session() context manager should reject calls with no token before
+    # attempting any request (covers the streamlined auth path).
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}), token=None)
+    with pytest.raises(GitHubError) as exc:
+        await server.list_tags("o", "r")
+    assert exc.value.status_code == 401
