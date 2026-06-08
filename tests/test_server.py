@@ -1110,3 +1110,178 @@ async def test_create_scheduled_workflow_commits_yaml(monkeypatch):
     assert "run-backup.sh" in yaml
     assert result["cron"] == "0 9 * * 1"
     assert result["branch"] == "main"
+
+
+# --- gh-CLI parity tools ----------------------------------------------------
+
+
+async def test_search_pull_requests_adds_is_pr(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        assert request.url.path == "/search/issues"
+        captured["q"] = request.url.params["q"]
+        return httpx.Response(200, json={"items": [{"number": 5, "title": "t",
+                                                    "state": "open"}]})
+
+    install_mock(monkeypatch, handler)
+    result = await server.search_pull_requests("repo:o/r is:open")
+    assert "is:pr" in captured["q"]
+    assert result[0]["number"] == 5
+
+
+async def test_search_pull_requests_no_double_is_pr(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["q"] = request.url.params["q"]
+        return httpx.Response(200, json={"items": []})
+
+    install_mock(monkeypatch, handler)
+    await server.search_pull_requests("is:pr author:me")
+    assert captured["q"].count("is:pr") == 1
+
+
+async def test_search_commits(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/search/commits"
+        return httpx.Response(200, json={"items": [
+            {"sha": "abc", "commit": {"message": "fix",
+                                      "author": {"name": "JD", "date": "2024"}}}]})
+
+    install_mock(monkeypatch, handler)
+    result = await server.search_commits("repo:o/r fix")
+    assert result[0]["sha"] == "abc"
+    assert result[0]["message"] == "fix"
+
+
+async def test_search_users(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/search/users"
+        return httpx.Response(200, json={"items": [
+            {"login": "octocat", "type": "User", "html_url": "u", "extra": 1}]})
+
+    install_mock(monkeypatch, handler)
+    result = await server.search_users("octocat")
+    assert result[0]["login"] == "octocat"
+    assert "extra" not in result[0]
+
+
+async def test_list_labels(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/labels"
+        return httpx.Response(200, json=[
+            {"name": "bug", "color": "d73a4a", "description": "broken"}])
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_labels("o", "r")
+    assert result[0]["name"] == "bug"
+    assert result[0]["color"] == "d73a4a"
+
+
+async def test_list_tags(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/tags"
+        return httpx.Response(200, json=[
+            {"name": "v1.0", "commit": {"sha": "deadbeef"}}])
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_tags("o", "r")
+    assert result[0]["name"] == "v1.0"
+    assert result[0]["sha"] == "deadbeef"
+
+
+async def test_get_tag_resolves_commit(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/commits/tags/v1.2.0"
+        return httpx.Response(200, json={
+            "sha": "abc", "commit": {"message": "release",
+                                     "author": {"name": "JD", "date": "2024"}}})
+
+    install_mock(monkeypatch, handler)
+    result = await server.get_tag("o", "r", "v1.2.0")
+    assert result["tag"] == "v1.2.0"
+    assert result["sha"] == "abc"
+
+
+async def test_list_gists(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/gists"
+        return httpx.Response(200, json=[
+            {"id": "g1", "description": "d", "public": True,
+             "files": {"a.txt": {}}, "html_url": "u"}])
+
+    install_mock(monkeypatch, handler)
+    result = await server.list_gists()
+    assert result[0]["id"] == "g1"
+    assert result[0]["files"] == ["a.txt"]
+
+
+async def test_get_latest_release(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/releases/latest"
+        return httpx.Response(200, json={"tag_name": "v2.0", "name": "v2.0",
+                                         "draft": False, "prerelease": False})
+
+    install_mock(monkeypatch, handler)
+    result = await server.get_latest_release("o", "r")
+    assert result["tag_name"] == "v2.0"
+
+
+async def test_create_repository_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await server.create_repository("newrepo")
+    assert exc.value.status_code == 403
+
+
+async def test_create_repository_user_and_org(monkeypatch):
+    import json
+    captured = {}
+
+    def handler(request):
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"full_name": "me/newrepo",
+                                         "stargazers_count": 0})
+
+    install_mock(monkeypatch, handler)
+    await server.create_repository("newrepo", description="d", auto_init=True)
+    assert captured["path"] == "/user/repos"
+    assert captured["body"]["auto_init"] is True
+
+    await server.create_repository("newrepo", org="acme")
+    assert captured["path"] == "/orgs/acme/repos"
+
+
+async def test_fork_repository(monkeypatch):
+    import json
+    captured = {}
+
+    def handler(request):
+        assert request.url.path == "/repos/o/r/forks"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(202, json={"full_name": "me/r",
+                                         "stargazers_count": 0})
+
+    install_mock(monkeypatch, handler)
+    result = await server.fork_repository("o", "r", organization="acme")
+    assert captured["body"]["organization"] == "acme"
+    assert result["full_name"] == "me/r"
+
+
+async def test_create_label_strips_hash(monkeypatch):
+    import json
+    captured = {}
+
+    def handler(request):
+        assert request.url.path == "/repos/o/r/labels"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"name": "bug", "color": "d73a4a",
+                                         "description": "x"})
+
+    install_mock(monkeypatch, handler)
+    result = await server.create_label("o", "r", "bug", color="#d73a4a")
+    assert captured["body"]["color"] == "d73a4a"  # leading # stripped
+    assert result["name"] == "bug"

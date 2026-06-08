@@ -16,15 +16,15 @@ Enterprise Server.
 
 ## Features
 
-- 🔍 **Search & discover** repositories, issues/PRs, and code — plus find reusable repos (across everything your token can see, license/activity-aware) for what you're building
-- 📦 **Repositories** — metadata, branches, file contents, directory listings, your repo list
+- 🔍 **Search & discover** repositories, issues, PRs, commits, code, and users — plus find reusable repos (across everything your token can see, license/activity-aware) for what you're building
+- 📦 **Repositories** — metadata, branches, tags, file contents, directory listings, your repo list; create and fork repos
 - 🧾 **Commits** — history, single-commit detail, and diffs between refs
 - 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign
 - 🔀 **Pull requests** — list, read, diffs/files, comments, open, update, merge, and review
 - ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch/**schedule** workflows, commit statuses & check runs, list/create releases
 - 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts
 - 🔔 **Notifications** — list and mark read across all your repos
-- ✍️ **Repo writes** — create branches, commit files, manage labels/assignees, create gists (gated by read-only mode)
+- ✍️ **Repo writes** — create/fork repos, create branches, commit files, manage labels/assignees, create gists (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
 - 🏢 **Enterprise-friendly** — set `GITHUB_API_URL` for GitHub Enterprise Server
 
@@ -62,7 +62,15 @@ Enterprise Server.
 | `list_code_scanning_alerts` | Code-scanning (CodeQL) alerts | |
 | `list_dependabot_alerts` | Dependabot vulnerability alerts | |
 | `search_issues` | Search issues and PRs across GitHub | |
+| `search_pull_requests` | Search PRs across GitHub (auto-adds `is:pr`) | |
+| `search_commits` | Search commits across GitHub | |
+| `search_users` | Search users and organizations | |
 | `search_code` | Search code across GitHub | |
+| `list_labels` | Labels defined in a repository | |
+| `list_tags` | Git tags with their commit SHAs | |
+| `get_tag` | Resolve a tag to its commit | |
+| `list_gists` | The authenticated user's gists | |
+| `get_latest_release` | A repository's latest published release | |
 | `find_reusable_repositories` | Find reusable repos for what you're building (license/activity-aware; public + accessible private) | |
 | `create_pull_request` | Open a new pull request (supports draft) | ✅ |
 | `update_pull_request` | Edit title/body/base, close/reopen a PR | ✅ |
@@ -84,6 +92,9 @@ Enterprise Server.
 | `delete_branch` | Delete a branch | ✅ |
 | `create_or_update_file` | Commit a file (create or update) | ✅ |
 | `create_gist` | Create a (secret or public) gist | ✅ |
+| `create_repository` | Create a new repo (user or org) | ✅ |
+| `fork_repository` | Fork a repo to your account/an org | ✅ |
+| `create_label` | Create a label in a repository | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 
