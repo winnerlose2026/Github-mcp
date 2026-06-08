@@ -21,7 +21,7 @@ Enterprise Server.
 - 🧾 **Commits** — history, single-commit detail, and diffs between refs
 - 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign
 - 🔀 **Pull requests** — list, read, diffs/files, comments, open, update, merge, and review
-- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch workflows, commit statuses & check runs, list/create releases
+- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch/**schedule** workflows, commit statuses & check runs, list/create releases
 - 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts
 - 🔔 **Notifications** — list and mark read across all your repos
 - ✍️ **Repo writes** — create branches, commit files, manage labels/assignees, create gists (gated by read-only mode)
@@ -71,6 +71,7 @@ Enterprise Server.
 | `add_pull_request_review_comment` | Inline comment on a PR diff line | ✅ |
 | `rerun_workflow_run` | Re-run a workflow run (or just failed jobs) | ✅ |
 | `trigger_workflow` | Dispatch a workflow_dispatch run | ✅ |
+| `create_scheduled_workflow` | Commit a cron-scheduled workflow ("do X later") | ✅ |
 | `create_release` | Create a release (and its tag) | ✅ |
 | `create_issue` | Open a new issue | ✅ |
 | `update_issue` | Edit/close/reopen an issue | ✅ |

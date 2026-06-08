@@ -12,6 +12,7 @@ variable ``GITHUB_MCP_READ_ONLY`` is truthy.
 from __future__ import annotations
 
 import base64
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -1626,6 +1627,98 @@ async def create_gist(
     async with GitHubClient(config) as gh:
         gist = await gh.post("/gists", json=payload)
     return _summarize_gist(gist)
+
+
+@mcp.tool()
+async def create_scheduled_workflow(
+    owner: str,
+    repo: str,
+    name: str,
+    cron: str,
+    run: str,
+    runs_on: str = "ubuntu-latest",
+    branch: str | None = None,
+    filename: str | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
+    """Schedule recurring work by committing a cron GitHub Actions workflow.
+
+    This is GitHub's native "do X later / on a schedule": it creates (or updates)
+    a workflow file at `.github/workflows/<filename>` that runs `run` (a shell
+    script) on the `cron` schedule, and also adds a `workflow_dispatch` trigger
+    so you can run it on demand. `cron` is standard 5-field UTC cron
+    (e.g. "0 9 * * 1" = 09:00 UTC every Monday).
+
+    IMPORTANT: GitHub only fires `schedule` triggers from a repository's DEFAULT
+    branch, so `branch` defaults to it — committing to another branch will run on
+    demand but never on the schedule. `filename` defaults to a slug of `name`.
+    Disabled in read-only mode; requires write access (and the token needs the
+    `workflow` scope to add workflow files).
+    """
+    _require_token()
+    _require_write()
+    if len(cron.split()) != 5:
+        raise GitHubError(
+            400,
+            "CRON",
+            f"/repos/{owner}/{repo}",
+            f"`cron` must be a 5-field cron expression (got: {cron!r}).",
+        )
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "scheduled"
+    fname = filename or f"{slug}.yml"
+    path = f".github/workflows/{fname}"
+    indented_run = "\n".join("          " + line for line in run.splitlines())
+    content = (
+        f"name: {name}\n"
+        "on:\n"
+        "  schedule:\n"
+        f'    - cron: "{cron}"\n'
+        "  workflow_dispatch: {}\n"
+        "permissions:\n"
+        "  contents: read\n"
+        "jobs:\n"
+        "  scheduled:\n"
+        f"    runs-on: {runs_on}\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - name: Run scheduled command\n"
+        "        run: |\n"
+        f"{indented_run}\n"
+    )
+    encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    commit_message = message or f"Add scheduled workflow: {name}"
+    async with GitHubClient(config) as gh:
+        if branch is None:
+            repo_data = await gh.get(f"/repos/{owner}/{repo}")
+            branch = repo_data.get("default_branch")
+        payload: dict[str, Any] = {
+            "message": commit_message,
+            "content": encoded,
+            "branch": branch,
+        }
+        # If the workflow file already exists on this branch, update it.
+        try:
+            existing = await gh.get(
+                f"/repos/{owner}/{repo}/contents/{path}", params={"ref": branch}
+            )
+            if isinstance(existing, dict) and existing.get("sha"):
+                payload["sha"] = existing.get("sha")
+        except GitHubError as exc:
+            if exc.status_code != 404:
+                raise
+        result = await gh.put(f"/repos/{owner}/{repo}/contents/{path}", json=payload)
+    commit = result.get("commit", {})
+    content_info = result.get("content", {})
+    return {
+        "path": content_info.get("path", path),
+        "branch": branch,
+        "cron": cron,
+        "runs_on": runs_on,
+        "commit_sha": commit.get("sha"),
+        "html_url": content_info.get("html_url"),
+        "note": "Scheduled runs fire only from the default branch and start "
+        "from the next cron tick; use trigger_workflow to run it now.",
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
