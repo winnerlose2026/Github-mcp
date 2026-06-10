@@ -22,7 +22,7 @@ Enterprise Server.
 - 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign
 - 🔀 **Pull requests** — list, read, diffs/files, comments, open, update, merge, and review
 - ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch/**schedule** workflows, commit statuses & check runs, list/create releases
-- 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts
+- 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts (list, fetch one by number, and dismiss/resolve)
 - 🔔 **Notifications** — list and mark read across all your repos
 - ✍️ **Repo writes** — create/fork repos, create branches, commit/delete files, manage labels (create/edit/delete) & assignees, request PR reviewers, create/edit gists (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
@@ -105,6 +105,9 @@ Enterprise Server.
 | `update_label` | Edit/rename a label | ✅ |
 | `delete_label` | Delete a label | ✅ |
 | `request_pull_request_reviewers` | Request user/team reviews on a PR | ✅ |
+| `dismiss_dependabot_alert` | Dismiss a Dependabot alert (with reason) | ✅ |
+| `dismiss_code_scanning_alert` | Dismiss a code-scanning alert (with reason) | ✅ |
+| `resolve_secret_scanning_alert` | Resolve a secret-scanning alert (with resolution) | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 
