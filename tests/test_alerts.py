@@ -1,9 +1,12 @@
 """Tests for the per-alert security tools in github_mcp.alerts."""
 
+import json
+
 import httpx
+import pytest
 
 from github_mcp import alerts, server
-from github_mcp.client import GitHubClient
+from github_mcp.client import GitHubClient, GitHubError
 from github_mcp.config import Config
 
 
@@ -133,3 +136,123 @@ async def test_get_secret_scanning_alert_omits_secret(monkeypatch):
     assert result["validity"] == "active"
     assert "secret" not in result
     assert "ghp_SHOULD_NOT_LEAK" not in str(result)
+
+
+async def test_dismiss_dependabot_alert_patches_payload(monkeypatch):
+    def handler(request):
+        assert request.method == "PATCH"
+        assert request.url.path == "/repos/o/r/dependabot/alerts/7"
+        payload = json.loads(request.content)
+        assert payload == {
+            "state": "dismissed",
+            "dismissed_reason": "tolerable_risk",
+            "dismissed_comment": "Accepted for now.",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "number": 7,
+                "state": "dismissed",
+                "dismissed_reason": "tolerable_risk",
+                "dismissed_comment": "Accepted for now.",
+                "dismissed_at": "2026-06-10T00:00:00Z",
+                "security_advisory": {"severity": "high", "summary": "x"},
+                "dependency": {"package": {"name": "requests", "ecosystem": "pip"}},
+            },
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.dismiss_dependabot_alert(
+        "o", "r", 7, "tolerable_risk", comment="Accepted for now."
+    )
+    assert result["state"] == "dismissed"
+    assert result["dismissed_reason"] == "tolerable_risk"
+    assert result["dismissed_comment"] == "Accepted for now."
+
+
+async def test_dismiss_dependabot_alert_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200), read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await alerts.dismiss_dependabot_alert("o", "r", 7, "not_used")
+    assert exc.value.status_code == 403
+
+
+async def test_dismiss_dependabot_alert_rejects_bad_reason(monkeypatch):
+    def handler(request):  # pragma: no cover - must never be called
+        raise AssertionError("API should not be called for an invalid reason")
+
+    install_mock(monkeypatch, handler)
+    with pytest.raises(GitHubError) as exc:
+        await alerts.dismiss_dependabot_alert("o", "r", 7, "because_i_said_so")
+    assert exc.value.status_code == 422
+
+
+async def test_dismiss_code_scanning_alert_patches_payload(monkeypatch):
+    def handler(request):
+        assert request.method == "PATCH"
+        assert request.url.path == "/repos/o/r/code-scanning/alerts/3"
+        payload = json.loads(request.content)
+        assert payload == {
+            "state": "dismissed",
+            "dismissed_reason": "won't fix",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "number": 3,
+                "state": "dismissed",
+                "dismissed_reason": "won't fix",
+                "dismissed_comment": None,
+                "rule": {"id": "py/x", "security_severity_level": "medium"},
+                "tool": {"name": "CodeQL"},
+            },
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.dismiss_code_scanning_alert("o", "r", 3, "won't fix")
+    assert result["state"] == "dismissed"
+    assert result["dismissed_reason"] == "won't fix"
+
+
+async def test_resolve_secret_scanning_alert_patches_and_omits_secret(monkeypatch):
+    def handler(request):
+        assert request.method == "PATCH"
+        assert request.url.path == "/repos/o/r/secret-scanning/alerts/5"
+        payload = json.loads(request.content)
+        assert payload == {
+            "state": "resolved",
+            "resolution": "revoked",
+            "resolution_comment": "Rotated.",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "number": 5,
+                "state": "resolved",
+                "secret_type": "github_pat",
+                "secret": "ghp_SHOULD_NOT_LEAK",
+                "resolution": "revoked",
+                "resolution_comment": "Rotated.",
+                "resolved_at": "2026-06-10T00:00:00Z",
+            },
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.resolve_secret_scanning_alert(
+        "o", "r", 5, "revoked", comment="Rotated."
+    )
+    assert result["state"] == "resolved"
+    assert result["resolution"] == "revoked"
+    assert result["resolution_comment"] == "Rotated."
+    assert "secret" not in result
+    assert "ghp_SHOULD_NOT_LEAK" not in str(result)
+
+
+async def test_resolve_secret_scanning_alert_rejects_bad_resolution(monkeypatch):
+    def handler(request):  # pragma: no cover - must never be called
+        raise AssertionError("API should not be called for an invalid resolution")
+
+    install_mock(monkeypatch, handler)
+    with pytest.raises(GitHubError) as exc:
+        await alerts.resolve_secret_scanning_alert("o", "r", 5, "nah")
+    assert exc.value.status_code == 422
