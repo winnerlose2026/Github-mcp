@@ -61,6 +61,9 @@ Enterprise Server.
 | `list_secret_scanning_alerts` | Secret-scanning alerts (no secret values) | |
 | `list_code_scanning_alerts` | Code-scanning (CodeQL) alerts | |
 | `list_dependabot_alerts` | Dependabot vulnerability alerts | |
+| `get_secret_scanning_alert` | A single secret-scanning alert by number (no secret value) | |
+| `get_code_scanning_alert` | A single code-scanning alert by number, with instance location | |
+| `get_dependabot_alert` | A single Dependabot alert by number, with full advisory detail | |
 | `search_issues` | Search issues and PRs across GitHub | |
 | `search_pull_requests` | Search PRs across GitHub (auto-adds `is:pr`) | |
 | `search_commits` | Search commits across GitHub | |
