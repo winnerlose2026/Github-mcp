@@ -4,7 +4,9 @@ These complement the bulk ``list_*_alerts`` tools in :mod:`github_mcp.server`.
 The ``get_*`` tools fetch one alert's full detail by its per-repository
 ``alert_number`` (the number shown by the corresponding list tool); the
 ``dismiss_*`` / ``resolve_*`` tools act on a single alert and are writes, so
-they are disabled in read-only mode. All register on the same FastMCP instance
+they are disabled in read-only mode. ``list_security_alerts`` returns all three alert types in one call, and
+``create_issues_for_alerts`` opens a tracking issue per open alert. All
+register on the same FastMCP instance
 and reuse the server's auth/session and summarizers, so they honor the same
 token and read-only policy. The package ``__init__`` imports this module for
 the side effect of registering these tools.
@@ -12,10 +14,12 @@ the side effect of registering these tools.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .client import GitHubError
 from .server import (
+    _clamp,
     _session,
     _summarize_code_scanning_alert,
     _summarize_dependabot_alert,
@@ -277,3 +281,220 @@ async def resolve_secret_scanning_alert(
         }
     )
     return summary
+
+
+# --- aggregate + automation over all alert types ---------------------------
+
+# type key -> (REST path segment, summarizer, slug used in issue markers)
+_ALERT_TYPES = ("dependabot", "code_scanning", "secret_scanning")
+_ALERT_SPECS = {
+    "dependabot": ("dependabot/alerts", _summarize_dependabot_alert, "dependabot"),
+    "code_scanning": (
+        "code-scanning/alerts",
+        _summarize_code_scanning_alert,
+        "code-scanning",
+    ),
+    "secret_scanning": (
+        "secret-scanning/alerts",
+        _summarize_secret_alert,
+        "secret-scanning",
+    ),
+}
+_MARKER_RE = re.compile(r"\[(security:[a-z0-9._-]+#\d+)\]")
+
+
+def _validate_alert_types(alert_types: list[str] | None) -> list[str]:
+    if not alert_types:
+        return list(_ALERT_TYPES)
+    bad = [t for t in alert_types if t not in _ALERT_TYPES]
+    if bad:
+        raise GitHubError(
+            422,
+            "GET",
+            "",
+            f"Invalid alert_types {bad}. Must be a subset of {list(_ALERT_TYPES)}.",
+        )
+    # Preserve caller order but drop duplicates.
+    seen: dict[str, None] = {}
+    for t in alert_types:
+        seen.setdefault(t, None)
+    return list(seen)
+
+
+async def _collect_alerts(
+    gh, owner: str, repo: str, types: list[str], state: str, limit: int
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
+    """Fetch summarized alerts for each type, tolerating per-type failures.
+
+    A type that errors (e.g. the feature is disabled or the token lacks the
+    permission) is recorded in `errors` rather than failing the whole call.
+    """
+    collected: dict[str, list[dict[str, Any]]] = {}
+    errors: dict[str, str] = {}
+    for t in types:
+        path_seg, summarizer, _slug = _ALERT_SPECS[t]
+        try:
+            raw = await gh.get(
+                f"/repos/{owner}/{repo}/{path_seg}",
+                params={"state": state, "per_page": limit},
+            )
+            collected[t] = [summarizer(a) for a in raw]
+        except GitHubError as exc:
+            errors[t] = exc.detail or str(exc)
+    return collected, errors
+
+
+@mcp.tool()
+async def list_security_alerts(
+    owner: str, repo: str, state: str = "open", limit: int = 30
+) -> dict[str, Any]:
+    """List Dependabot, code-scanning, and secret-scanning alerts in one call.
+
+    Returns the three alert lists keyed by type plus a `counts` block. `state`
+    is passed to each endpoint (`open` (default) or `all` are valid for all
+    three); `limit` (max 100) is the per-type cap. If a type can't be read
+    (feature disabled, or the token lacks that permission), it's reported under
+    `errors` instead of failing the whole call. The secret value of
+    secret-scanning alerts is never returned.
+    """
+    limit = _clamp(limit, 100)
+    types = list(_ALERT_TYPES)
+    async with _session() as gh:
+        collected, errors = await _collect_alerts(
+            gh, owner, repo, types, state, limit
+        )
+    result: dict[str, Any] = {
+        "dependabot": collected.get("dependabot", []),
+        "code_scanning": collected.get("code_scanning", []),
+        "secret_scanning": collected.get("secret_scanning", []),
+    }
+    counts = {t: len(collected.get(t, [])) for t in _ALERT_TYPES}
+    counts["total"] = sum(counts[t] for t in _ALERT_TYPES)
+    result["counts"] = counts
+    if errors:
+        result["errors"] = errors
+    return result
+
+
+def _issue_for_alert(alert_type: str, alert: dict[str, Any]) -> tuple[str, str, str]:
+    """Build the (marker, title, body) for the tracking issue of one alert."""
+    slug = _ALERT_SPECS[alert_type][2]
+    number = alert.get("number")
+    marker = f"security:{slug}#{number}"
+    url = alert.get("html_url")
+    if alert_type == "dependabot":
+        sev = alert.get("severity") or "unknown"
+        pkg = alert.get("package")
+        eco = alert.get("ecosystem")
+        summary = alert.get("summary") or "Dependabot alert"
+        title = f"[{marker}] {sev}: {pkg} ({eco}) — {summary}"
+        detail = (
+            f"- Package: `{pkg}` ({eco})\n"
+            f"- Severity: {sev}\n"
+            f"- Summary: {summary}"
+        )
+    elif alert_type == "code_scanning":
+        sev = alert.get("severity") or "unknown"
+        rule = alert.get("rule_id") or "code-scanning alert"
+        desc = alert.get("description")
+        tool = alert.get("tool")
+        title = f"[{marker}] {sev}: {rule}"
+        detail = (
+            f"- Rule: `{rule}`\n"
+            f"- Severity: {sev}\n"
+            f"- Tool: {tool}\n"
+            f"- Description: {desc}"
+        )
+    else:  # secret_scanning
+        stype = alert.get("secret_type_display_name") or alert.get("secret_type")
+        title = f"[{marker}] Secret detected: {stype}"
+        detail = f"- Secret type: {stype}\n- State: {alert.get('state')}"
+    title = title[:240]
+    body = (
+        "Security alert tracked from GitHub.\n\n"
+        f"{detail}\n"
+        f"- Link: {url}\n\n"
+        f"<!-- {marker} -->\n"
+        "_Opened automatically by github-mcp `create_issues_for_alerts`. "
+        "The marker in the title is used to avoid duplicates._"
+    )
+    return marker, title, body
+
+
+async def _existing_alert_markers(gh, owner: str, repo: str) -> set[str]:
+    """Markers already tracked by `security`-labeled issues (open or closed)."""
+    issues = await gh.get(
+        f"/repos/{owner}/{repo}/issues",
+        params={"state": "all", "labels": "security", "per_page": 100},
+    )
+    markers: set[str] = set()
+    for it in issues:
+        if "pull_request" in it:
+            continue
+        markers.update(_MARKER_RE.findall(it.get("title") or ""))
+    return markers
+
+
+@mcp.tool()
+async def create_issues_for_alerts(
+    owner: str,
+    repo: str,
+    alert_types: list[str] | None = None,
+    state: str = "open",
+    limit: int = 30,
+) -> dict[str, Any]:
+    """Open a tracking issue for each open security alert (a gated write).
+
+    For every alert of the requested types (default: all of `dependabot`,
+    `code_scanning`, `secret_scanning`), this opens a GitHub issue titled
+    `[security:<type>#<number>] …` and labeled `security`, unless an issue with
+    that marker already exists. Existing issues are detected among the repo's
+    `security`-labeled issues (open or closed), so re-running is safe and won't
+    create duplicates. `limit` (max 100) caps how many alerts per type are
+    considered. A type that can't be read is reported under `errors`.
+
+    Returns `created` (alert marker + new issue number/url), `skipped_existing`,
+    any per-type `errors`, and `counts`. This is a write tool — disabled in
+    read-only mode — and may open multiple issues in one call.
+    """
+    types = _validate_alert_types(alert_types)
+    limit = _clamp(limit, 100)
+    created: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    async with _session(write=True) as gh:
+        collected, errors = await _collect_alerts(
+            gh, owner, repo, types, state, limit
+        )
+        existing = await _existing_alert_markers(gh, owner, repo)
+        seen = 0
+        for t in types:
+            for alert in collected.get(t, []):
+                seen += 1
+                marker, title, body = _issue_for_alert(t, alert)
+                if marker in existing:
+                    skipped.append(marker)
+                    continue
+                issue = await gh.post(
+                    f"/repos/{owner}/{repo}/issues",
+                    json={"title": title, "body": body, "labels": ["security"]},
+                )
+                created.append(
+                    {
+                        "alert": marker,
+                        "issue_number": issue.get("number"),
+                        "issue_url": issue.get("html_url"),
+                    }
+                )
+                existing.add(marker)  # guard against duplicates within this run
+    result: dict[str, Any] = {
+        "created": created,
+        "skipped_existing": skipped,
+        "counts": {
+            "created": len(created),
+            "skipped": len(skipped),
+            "alerts_seen": seen,
+        },
+    }
+    if errors:
+        result["errors"] = errors
+    return result

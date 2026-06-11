@@ -256,3 +256,122 @@ async def test_resolve_secret_scanning_alert_rejects_bad_resolution(monkeypatch)
     with pytest.raises(GitHubError) as exc:
         await alerts.resolve_secret_scanning_alert("o", "r", 5, "nah")
     assert exc.value.status_code == 422
+
+
+# --- list_security_alerts (aggregate) --------------------------------------
+
+
+async def test_list_security_alerts_combines_all_types(monkeypatch):
+    def handler(request):
+        p = request.url.path
+        if p == "/repos/o/r/dependabot/alerts":
+            return httpx.Response(200, json=[
+                {"number": 7, "state": "open",
+                 "security_advisory": {"severity": "high", "summary": "x"},
+                 "dependency": {"package": {"name": "requests", "ecosystem": "pip"}}},
+            ])
+        if p == "/repos/o/r/code-scanning/alerts":
+            return httpx.Response(200, json=[
+                {"number": 3, "state": "open",
+                 "rule": {"id": "py/x", "security_severity_level": "medium"},
+                 "tool": {"name": "CodeQL"}},
+            ])
+        if p == "/repos/o/r/secret-scanning/alerts":
+            return httpx.Response(200, json=[
+                {"number": 5, "state": "open", "secret_type": "github_pat",
+                 "secret": "ghp_SHOULD_NOT_LEAK"},
+            ])
+        raise AssertionError(f"unexpected path {p}")
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.list_security_alerts("o", "r")
+    assert result["counts"] == {
+        "dependabot": 1, "code_scanning": 1, "secret_scanning": 1, "total": 3,
+    }
+    assert "errors" not in result
+    assert "ghp_SHOULD_NOT_LEAK" not in str(result)
+
+
+async def test_list_security_alerts_records_per_type_errors(monkeypatch):
+    def handler(request):
+        p = request.url.path
+        if p == "/repos/o/r/dependabot/alerts":
+            return httpx.Response(200, json=[{"number": 7, "state": "open",
+                "security_advisory": {"severity": "low"}, "dependency": {}}])
+        if p == "/repos/o/r/code-scanning/alerts":
+            return httpx.Response(200, json=[])
+        if p == "/repos/o/r/secret-scanning/alerts":
+            return httpx.Response(403, json={"message": "no access"})
+        raise AssertionError(f"unexpected path {p}")
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.list_security_alerts("o", "r")
+    assert result["counts"]["total"] == 1
+    assert "secret_scanning" in result["errors"]
+    assert result["secret_scanning"] == []
+
+
+# --- create_issues_for_alerts (automation) ---------------------------------
+
+
+async def test_create_issues_for_alerts_creates_and_dedups(monkeypatch):
+    posted = []
+    counter = {"n": 100}
+
+    def handler(request):
+        p = request.url.path
+        m = request.method
+        if m == "GET" and p == "/repos/o/r/dependabot/alerts":
+            return httpx.Response(200, json=[{"number": 7, "state": "open",
+                "security_advisory": {"severity": "critical", "summary": "RCE"},
+                "dependency": {"package": {"name": "requests", "ecosystem": "pip"}}}])
+        if m == "GET" and p == "/repos/o/r/code-scanning/alerts":
+            return httpx.Response(200, json=[{"number": 3, "state": "open",
+                "rule": {"id": "py/x", "security_severity_level": "high"},
+                "tool": {"name": "CodeQL"}}])
+        if m == "GET" and p == "/repos/o/r/secret-scanning/alerts":
+            return httpx.Response(200, json=[{"number": 5, "state": "open",
+                "secret_type": "github_pat",
+                "secret_type_display_name": "GitHub PAT"}])
+        if m == "GET" and p == "/repos/o/r/issues":
+            # dependabot#7 already tracked
+            return httpx.Response(200, json=[
+                {"number": 1, "title": "[security:dependabot#7] old"},
+            ])
+        if m == "POST" and p == "/repos/o/r/issues":
+            payload = json.loads(request.content)
+            posted.append(payload)
+            counter["n"] += 1
+            return httpx.Response(201, json={
+                "number": counter["n"],
+                "html_url": f"https://github.com/o/r/issues/{counter['n']}",
+            })
+        raise AssertionError(f"unexpected {m} {p}")
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.create_issues_for_alerts("o", "r")
+    assert result["counts"] == {"created": 2, "skipped": 1, "alerts_seen": 3}
+    assert result["skipped_existing"] == ["security:dependabot#7"]
+    created_markers = sorted(c["alert"] for c in result["created"])
+    assert created_markers == ["security:code-scanning#3", "security:secret-scanning#5"]
+    # every created issue carries the security label and its marker in the body
+    assert all(pl["labels"] == ["security"] for pl in posted)
+    assert any("security:code-scanning#3" in pl["title"] for pl in posted)
+    assert all("<!-- security:" in pl["body"] for pl in posted)
+
+
+async def test_create_issues_for_alerts_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(200), read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await alerts.create_issues_for_alerts("o", "r")
+    assert exc.value.status_code == 403
+
+
+async def test_create_issues_for_alerts_rejects_bad_type(monkeypatch):
+    def handler(request):  # pragma: no cover - must never be called
+        raise AssertionError("API should not be called for invalid alert_types")
+
+    install_mock(monkeypatch, handler)
+    with pytest.raises(GitHubError) as exc:
+        await alerts.create_issues_for_alerts("o", "r", alert_types=["bogus"])
+    assert exc.value.status_code == 422
