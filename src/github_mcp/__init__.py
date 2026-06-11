@@ -10,7 +10,8 @@ pull requests, commits, and code, and optionally open issues and comments.
 # `alerts` adds the per-alert security tools.
 from . import server as server  # noqa: F401
 from . import alerts as alerts  # noqa: F401
+from . import releases as releases  # noqa: F401
 
 __version__ = "0.12.0"
 
-__all__ = ["__version__", "server", "alerts"]
+__all__ = ["__version__", "server", "alerts", "releases"]
