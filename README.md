@@ -21,7 +21,7 @@ Enterprise Server.
 - 🧾 **Commits** — history, single-commit detail, and diffs between refs
 - 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign
 - 🔀 **Pull requests** — list, read, diffs/files, comments, open, update, merge, and review
-- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch/**schedule** workflows, commit statuses & check runs, list/create releases
+- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch/**schedule** workflows, commit statuses & check runs, list/create/delete releases & tags
 - 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts (list each or all-in-one, fetch one by number, dismiss/resolve, and open tracking issues per alert)
 - 🔔 **Notifications** — list and mark read across all your repos
 - ✍️ **Repo writes** — create/fork repos, create branches, commit/delete files, manage labels (create/edit/delete) & assignees, request PR reviewers, create/edit gists (gated by read-only mode)
@@ -110,6 +110,9 @@ Enterprise Server.
 | `dismiss_code_scanning_alert` | Dismiss a code-scanning alert (with reason) | ✅ |
 | `resolve_secret_scanning_alert` | Resolve a secret-scanning alert (with resolution) | ✅ |
 | `create_issues_for_alerts` | Open a tracking issue per open security alert (deduped) | ✅ |
+| `delete_release` | Delete a release (by tag or id; leaves the tag) | ✅ |
+| `delete_tag` | Delete a git tag ref | ✅ |
+| `delete_release_and_tag` | Delete a release and its tag together | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 
