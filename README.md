@@ -22,7 +22,7 @@ Enterprise Server.
 - 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign
 - 🔀 **Pull requests** — list, read, diffs/files, comments, open, update, merge, and review
 - ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch/**schedule** workflows, commit statuses & check runs, list/create releases
-- 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts (list, fetch one by number, and dismiss/resolve)
+- 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts (list each or all-in-one, fetch one by number, dismiss/resolve, and open tracking issues per alert)
 - 🔔 **Notifications** — list and mark read across all your repos
 - ✍️ **Repo writes** — create/fork repos, create branches, commit/delete files, manage labels (create/edit/delete) & assignees, request PR reviewers, create/edit gists (gated by read-only mode)
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
@@ -64,6 +64,7 @@ Enterprise Server.
 | `get_secret_scanning_alert` | A single secret-scanning alert by number (no secret value) | |
 | `get_code_scanning_alert` | A single code-scanning alert by number, with instance location | |
 | `get_dependabot_alert` | A single Dependabot alert by number, with full advisory detail | |
+| `list_security_alerts` | Dependabot + code-scanning + secret-scanning alerts in one call | |
 | `search_issues` | Search issues and PRs across GitHub | |
 | `search_pull_requests` | Search PRs across GitHub (auto-adds `is:pr`) | |
 | `search_commits` | Search commits across GitHub | |
@@ -108,6 +109,7 @@ Enterprise Server.
 | `dismiss_dependabot_alert` | Dismiss a Dependabot alert (with reason) | ✅ |
 | `dismiss_code_scanning_alert` | Dismiss a code-scanning alert (with reason) | ✅ |
 | `resolve_secret_scanning_alert` | Resolve a secret-scanning alert (with resolution) | ✅ |
+| `create_issues_for_alerts` | Open a tracking issue per open security alert (deduped) | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 
