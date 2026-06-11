@@ -12,6 +12,6 @@ from . import server as server  # noqa: F401
 from . import alerts as alerts  # noqa: F401
 from . import releases as releases  # noqa: F401
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 __all__ = ["__version__", "server", "alerts", "releases"]
