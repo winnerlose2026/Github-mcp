@@ -1,7 +1,7 @@
 # GitHub MCP Connector
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that
-connects **Claude** to **GitHub**. It exposes 50+ GitHub REST API operations as
+connects **Claude** to **GitHub**. It exposes 100 GitHub REST API operations as
 MCP tools, so Claude (Desktop, Code, or any MCP client) can search and read
 repositories, files, and commit history; triage and comment on issues; review,
 open, and merge pull requests; drive CI (read logs, re-run, dispatch); inspect
@@ -17,11 +17,11 @@ Enterprise Server.
 ## Features
 
 - 🔍 **Search & discover** repositories, issues, PRs, commits, code, and users — plus find reusable repos (across everything your token can see, license/activity-aware) for what you're building
-- 📦 **Repositories** — metadata, branches, tags, file contents, directory listings, your repo list; create and fork repos
-- 🧾 **Commits** — history, single-commit detail, and diffs between refs
-- 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign
-- 🔀 **Pull requests** — list, read, diffs/files, comments, open, update, merge, and review
-- ⚙️ **Actions & releases** — list runs/jobs, read failed-job logs, re-run/dispatch/**schedule** workflows, commit statuses & check runs, list/create/delete releases & tags
+- 📦 **Repositories** — metadata, branches, tags, file contents, directory listings, languages, topics, collaborators, your repo list; create/fork repos and update settings
+- 🧾 **Commits** — history, single-commit detail, diffs between refs, and set commit statuses
+- 🐛 **Issues** — list, read, create, comment, read comments, edit/close, label, assign, lock/unlock, milestones
+- 🔀 **Pull requests** — list, read, diffs/files/commits, comments, open, update, merge, review, and request reviewers
+- ⚙️ **Actions & releases** — list workflows/runs/jobs, read failed-job logs, re-run/dispatch/cancel/**schedule** workflows, commit statuses & check runs, full release lifecycle (create/edit/delete, changelog notes, assets) & tags
 - 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts (list each or all-in-one, fetch one by number, dismiss/resolve, and open tracking issues per alert)
 - 🔔 **Notifications** — list and mark read across all your repos
 - ✍️ **Repo writes** — create/fork repos, create branches, commit/delete files, manage labels (create/edit/delete) & assignees, request PR reviewers, create/edit gists (gated by read-only mode)
@@ -77,6 +77,16 @@ Enterprise Server.
 | `get_latest_release` | A repository's latest published release | |
 | `get_release_by_tag` | A specific release by tag (incl. drafts) | |
 | `get_gist` | A single gist with file contents | |
+| `generate_release_notes` | Build changelog notes for a tag (no release created) | |
+| `list_release_assets` | Binary assets attached to a release | |
+| `list_workflows` | Workflow definitions in a repo | |
+| `get_rate_limit` | Token's API rate-limit status | |
+| `get_user` | Any user/org's public profile | |
+| `list_repository_collaborators` | Collaborators with permission level | |
+| `list_repository_languages` | Language byte breakdown | |
+| `get_repository_topics` | Topics set on a repo | |
+| `list_milestones` | Milestones by state | |
+| `list_pull_request_commits` | Commits that make up a PR | |
 | `find_reusable_repositories` | Find reusable repos for what you're building (license/activity-aware; public + accessible private) | |
 | `create_pull_request` | Open a new pull request (supports draft) | ✅ |
 | `update_pull_request` | Edit title/body/base, close/reopen a PR | ✅ |
@@ -113,6 +123,15 @@ Enterprise Server.
 | `delete_release` | Delete a release (by tag or id; leaves the tag) | ✅ |
 | `delete_tag` | Delete a git tag ref | ✅ |
 | `delete_release_and_tag` | Delete a release and its tag together | ✅ |
+| `update_release` | Edit a release (name/body/draft/tag) | ✅ |
+| `upload_release_asset` | Attach a binary asset to a release | ✅ |
+| `cancel_workflow_run` | Cancel an in-progress workflow run | ✅ |
+| `create_commit_status` | Set a commit status on a SHA | ✅ |
+| `update_repository` | Update repo settings (desc/visibility/default branch) | ✅ |
+| `replace_repository_topics` | Replace a repo's topics | ✅ |
+| `create_milestone` | Create a milestone | ✅ |
+| `lock_issue` | Lock an issue/PR conversation | ✅ |
+| `unlock_issue` | Unlock an issue/PR | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 
