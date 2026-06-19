@@ -199,7 +199,7 @@ async def test_upload_release_asset(monkeypatch):
         if request.method == "GET" and p == "/repos/o/r/releases/tags/v1":
             return httpx.Response(200, json={"id": 1,
                 "upload_url": "https://uploads.github.com/repos/o/r/releases/1/assets{?name,label}"})
-        if request.method == "POST" and "uploads.github.com" in str(request.url):
+        if request.method == "POST" and request.url.host == "uploads.github.com":
             seen["host"] = request.url.host
             seen["name"] = request.url.params.get("name")
             seen["ctype"] = request.headers.get("Content-Type")
