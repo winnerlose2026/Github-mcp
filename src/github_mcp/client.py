@@ -83,14 +83,25 @@ class GitHubClient:
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
         accept: str | None = None,
+        content: bytes | None = None,
+        content_type: str | None = None,
     ) -> httpx.Response:
-        headers = {"Accept": accept} if accept else None
+        headers: dict[str, str] = {}
+        if accept:
+            headers["Accept"] = accept
+        if content_type:
+            headers["Content-Type"] = content_type
         clean_params = (
             {k: v for k, v in params.items() if v is not None} if params else None
         )
         try:
             response = await self._client.request(
-                method, path, params=clean_params, json=json, headers=headers
+                method,
+                path,
+                params=clean_params,
+                json=json,
+                content=content,
+                headers=headers or None,
             )
         except httpx.HTTPError as exc:  # network/timeout errors
             raise GitHubError(0, method, path, f"request error: {exc}") from exc
@@ -141,6 +152,23 @@ class GitHubClient:
         # (e.g. removing an issue label returns the remaining labels). A few
         # deletes (e.g. deleting file contents) also require a JSON body.
         response = await self._request("DELETE", path, json=json)
+        if not response.content:
+            return None
+        return response.json()
+
+    async def upload(
+        self,
+        url: str,
+        *,
+        data: bytes,
+        content_type: str,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        # Release-asset uploads go to a different host (uploads.github.com) with
+        # a raw binary body rather than JSON; `url` is the absolute upload URL.
+        response = await self._request(
+            "POST", url, params=params, content=data, content_type=content_type
+        )
         if not response.content:
             return None
         return response.json()
