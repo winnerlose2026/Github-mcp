@@ -1,7 +1,7 @@
 # GitHub MCP Connector
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that
-connects **Claude** to **GitHub**. It exposes 100 GitHub REST API operations as
+connects **Claude** to **GitHub**. It exposes 120+ GitHub REST API operations as
 MCP tools, so Claude (Desktop, Code, or any MCP client) can search and read
 repositories, files, and commit history; triage and comment on issues; review,
 open, and merge pull requests; drive CI (read logs, re-run, dispatch); inspect
@@ -132,6 +132,28 @@ Enterprise Server.
 | `create_milestone` | Create a milestone | ✅ |
 | `lock_issue` | Lock an issue/PR conversation | ✅ |
 | `unlock_issue` | Unlock an issue/PR | ✅ |
+| `list_pending_deployments` | Environments a workflow run is awaiting approval on | |
+| `review_deployment` | Approve/reject a run's pending environment deployments | ✅ |
+| `list_repo_secrets` | Names of a repo's Actions secrets (no values) | |
+| `set_repo_secret` | Create/update an Actions secret (sealed-box encrypted) | ✅ |
+| `delete_repo_secret` | Delete an Actions secret | ✅ |
+| `list_repo_variables` | A repo's Actions variables (name + value) | |
+| `set_repo_variable` | Create/update an Actions variable | ✅ |
+| `delete_repo_variable` | Delete an Actions variable | ✅ |
+| `list_run_artifacts` | Artifacts produced by a workflow run | |
+| `download_artifact` | Download link + metadata for a run artifact | |
+| `add_repository_collaborator` | Add/invite a collaborator (with permission) | ✅ |
+| `remove_repository_collaborator` | Remove a collaborator | ✅ |
+| `get_branch_protection` | A branch's protection settings | |
+| `update_branch_protection` | Set required checks/reviews/enforce-admins | ✅ |
+| `merge_branch` | Merge one branch into another (no PR) | ✅ |
+| `update_pull_request_branch` | Sync a PR branch with its base ("Update branch") | ✅ |
+| `update_issue_comment` | Edit an issue/PR comment | ✅ |
+| `delete_issue_comment` | Delete an issue/PR comment | ✅ |
+| `delete_release_asset` | Delete a release asset | ✅ |
+| `download_release_asset` | Download link + metadata for a release asset | |
+| `delete_gist` | Delete one of your gists | ✅ |
+| `mark_all_notifications_read` | Mark all notifications read | ✅ |
 
 Tools marked **Write** are disabled when `GITHUB_MCP_READ_ONLY` is set.
 
