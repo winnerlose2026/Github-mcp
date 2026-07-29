@@ -1,10 +1,7 @@
-"""Deployment-gate tools for GitHub Actions environments.
+"""Deployment gates: environments awaiting approval, and approving them.
 
-When a workflow job targets an environment with required reviewers (e.g. a
-`pypi` environment that gates publishing), the run pauses until a reviewer
-approves. These tools let you see what's waiting and approve or reject it
-without leaving the chat. ``review_deployment`` is a write (disabled in
-read-only mode). The package ``__init__`` imports this module to register them.
+Tools register on the shared FastMCP instance from :mod:`github_mcp.core`;
+the package ``__init__`` imports this module to register them.
 """
 
 from __future__ import annotations
@@ -12,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from .client import GitHubError
-from .server import _session, mcp
+from .core import _session, mcp
 
 _REVIEW_STATES = {"approved", "rejected"}
 

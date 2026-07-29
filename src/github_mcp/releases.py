@@ -1,23 +1,18 @@
-"""Additional release and tag tools.
+"""Releases and tags: read, create, edit, delete, and release assets.
 
-The bulk of the connector's release/tag tools live in :mod:`github_mcp.server`
-(``create_release``, ``list_releases``, ``list_tags``, ``get_tag``). This module
-adds the rest: deletions (a release and its git tag are separate objects, so
-``delete_release``/``delete_tag`` each touch one and ``delete_release_and_tag``
-removes both, tolerating either being already gone), editing (``update_release``),
-changelog generation (``generate_release_notes``), and binary assets
-(``list_release_assets``/``upload_release_asset``). Writes are disabled in
-read-only mode. All register on the shared FastMCP instance; the package
-``__init__`` imports this module for the side effect of registering them.
+Tools register on the shared FastMCP instance from :mod:`github_mcp.core`;
+the package ``__init__`` imports this module to register them.
 """
 
 from __future__ import annotations
 
 import base64
 from typing import Any
+from urllib.parse import quote
 
 from .client import GitHubError
-from .server import _session, _summarize_release, mcp
+from .core import _clamp, _session, mcp
+from .summaries import _summarize_commit, _summarize_release
 
 
 @mcp.tool()
@@ -227,4 +222,157 @@ async def upload_release_asset(
         "size": asset.get("size"),
         "state": asset.get("state"),
         "browser_download_url": asset.get("browser_download_url"),
+    }
+
+
+@mcp.tool()
+async def list_releases(
+    owner: str, repo: str, limit: int = 20
+) -> list[dict[str, Any]]:
+    """List releases for a repository, newest first.
+
+    Returns up to `limit` (max 50) releases with tag, name, draft/prerelease
+    flags, and publish date.
+    """
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
+        releases = await gh.get(
+            f"/repos/{owner}/{repo}/releases", params={"per_page": limit}
+        )
+    return [_summarize_release(r) for r in releases]
+
+
+@mcp.tool()
+async def get_latest_release(owner: str, repo: str) -> dict[str, Any]:
+    """Get a repository's latest published release (gh release view --latest).
+
+    Returns the most recent non-draft, non-prerelease release. Raises a 404 if the
+    repository has no published releases.
+    """
+    async with _session() as gh:
+        release = await gh.get(f"/repos/{owner}/{repo}/releases/latest")
+    return _summarize_release(release)
+
+
+@mcp.tool()
+async def get_release_by_tag(owner: str, repo: str, tag: str) -> dict[str, Any]:
+    """Get a release by its tag name (gh release view <tag>).
+
+    `tag` is the release's tag (e.g. `v1.2.0`). Unlike `get_latest_release`, this
+    finds a specific release even if it's a draft or prerelease. Raises a 404 if
+    no release exists for the tag.
+    """
+    async with _session() as gh:
+        release = await gh.get(f"/repos/{owner}/{repo}/releases/tags/{quote(tag, safe='/')}")
+    return _summarize_release(release)
+
+
+@mcp.tool()
+async def create_release(
+    owner: str,
+    repo: str,
+    tag_name: str,
+    target_commitish: str | None = None,
+    name: str | None = None,
+    body: str | None = None,
+    draft: bool = False,
+    prerelease: bool = False,
+    generate_release_notes: bool = False,
+) -> dict[str, Any]:
+    """Create a release, creating its git tag if it doesn't already exist.
+
+    `tag_name` is the tag (e.g. `v1.2.0`). If that tag doesn't exist yet, it's
+    created pointing at `target_commitish` (a branch, tag, or commit SHA;
+    defaults to the repository's default branch). `name` is the release title,
+    `body` its notes. Set `generate_release_notes=True` to have GitHub
+    auto-generate notes from merged PRs (appended to `body` if both are given),
+    `draft=True` to save without publishing, or `prerelease=True` to mark it a
+    pre-release.
+
+    Publishing a (non-draft) release fires GitHub's `release: published` event —
+    handy for triggering release workflows. Disabled in read-only mode; requires
+    a token with write access.
+    """
+    payload: dict[str, Any] = {
+        "tag_name": tag_name,
+        "draft": draft,
+        "prerelease": prerelease,
+        "generate_release_notes": generate_release_notes,
+    }
+    if target_commitish is not None:
+        payload["target_commitish"] = target_commitish
+    if name is not None:
+        payload["name"] = name
+    if body is not None:
+        payload["body"] = body
+    async with _session(write=True) as gh:
+        release = await gh.post(f"/repos/{owner}/{repo}/releases", json=payload)
+    summary = _summarize_release(release)
+    summary["id"] = release.get("id")
+    summary["body"] = release.get("body")
+    return summary
+
+
+@mcp.tool()
+async def list_tags(owner: str, repo: str, limit: int = 30) -> list[dict[str, Any]]:
+    """List git tags in a repository, with the commit SHA each points at."""
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
+        tags = await gh.get(f"/repos/{owner}/{repo}/tags", params={"per_page": limit})
+    return [
+        {
+            "name": tag.get("name"),
+            "sha": (tag.get("commit") or {}).get("sha"),
+        }
+        for tag in tags
+    ]
+
+
+@mcp.tool()
+async def get_tag(owner: str, repo: str, tag: str) -> dict[str, Any]:
+    """Resolve a single tag to its commit (the commit the tag ref points at).
+
+    `tag` is the tag name (e.g. `v1.2.0`). Works for both lightweight and
+    annotated tags; returns the underlying commit's SHA, message, and author.
+    """
+    async with _session() as gh:
+        commit = await gh.get(
+            f"/repos/{owner}/{repo}/commits/tags/{quote(tag, safe='/')}"
+        )
+    summary = _summarize_commit(commit)
+    summary["tag"] = tag
+    return summary
+
+
+@mcp.tool()
+async def delete_release_asset(
+    owner: str, repo: str, asset_id: int
+) -> dict[str, Any]:
+    """Delete a release asset by its id (a gated write).
+
+    `asset_id` is from `list_release_assets`.
+    """
+    async with _session(write=True) as gh:
+        await gh.delete(f"/repos/{owner}/{repo}/releases/assets/{asset_id}")
+    return {"deleted": True, "asset_id": asset_id}
+
+
+@mcp.tool()
+async def download_release_asset(
+    owner: str, repo: str, asset_id: int
+) -> dict[str, Any]:
+    """Get a download link and metadata for a release asset.
+
+    Returns the asset's name, size, content type, and `browser_download_url`.
+    The binary itself isn't streamed back over MCP — use the URL to fetch it.
+    """
+    async with _session() as gh:
+        a = await gh.get(f"/repos/{owner}/{repo}/releases/assets/{asset_id}")
+    return {
+        "id": a.get("id"),
+        "name": a.get("name"),
+        "size": a.get("size"),
+        "content_type": a.get("content_type"),
+        "download_count": a.get("download_count"),
+        "browser_download_url": a.get("browser_download_url"),
     }

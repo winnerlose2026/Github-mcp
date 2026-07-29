@@ -1,20 +1,22 @@
-"""Tests for the per-alert security tools in github_mcp.alerts."""
+"""Tests for github_mcp.alerts."""
+
+from __future__ import annotations
 
 import json
 
 import httpx
 import pytest
 
-from github_mcp import alerts, server
+from github_mcp import alerts, core
 from github_mcp.client import GitHubClient, GitHubError
 from github_mcp.config import Config
 
 
 def install_mock(monkeypatch, handler, *, token="test-token", read_only=False):
-    """Point the server's session at a mocked GitHub API.
+    """Point the shared session at a mocked GitHub API.
 
-    The per-alert tools call `server._session`, which reads `server.config` and
-    `server.GitHubClient`, so those are what we patch.
+    Tools call `core._session`, which reads `core.config` and
+    `core.GitHubClient`, so those are what we patch.
     """
     cfg = Config(
         token=token,
@@ -24,11 +26,9 @@ def install_mock(monkeypatch, handler, *, token="test-token", read_only=False):
         user_agent="test-agent",
     )
     transport = httpx.MockTransport(handler)
-    monkeypatch.setattr(server, "config", cfg)
+    monkeypatch.setattr(core, "config", cfg)
     monkeypatch.setattr(
-        server,
-        "GitHubClient",
-        lambda c: GitHubClient(c, transport=transport),
+        core, "GitHubClient", lambda c: GitHubClient(c, transport=transport)
     )
 
 
@@ -258,9 +258,6 @@ async def test_resolve_secret_scanning_alert_rejects_bad_resolution(monkeypatch)
     assert exc.value.status_code == 422
 
 
-# --- list_security_alerts (aggregate) --------------------------------------
-
-
 async def test_list_security_alerts_combines_all_types(monkeypatch):
     def handler(request):
         p = request.url.path
@@ -309,9 +306,6 @@ async def test_list_security_alerts_records_per_type_errors(monkeypatch):
     assert result["counts"]["total"] == 1
     assert "secret_scanning" in result["errors"]
     assert result["secret_scanning"] == []
-
-
-# --- create_issues_for_alerts (automation) ---------------------------------
 
 
 async def test_create_issues_for_alerts_creates_and_dedups(monkeypatch):
@@ -375,3 +369,53 @@ async def test_create_issues_for_alerts_rejects_bad_type(monkeypatch):
     with pytest.raises(GitHubError) as exc:
         await alerts.create_issues_for_alerts("o", "r", alert_types=["bogus"])
     assert exc.value.status_code == 422
+
+
+async def test_list_secret_scanning_alerts_omits_secret(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/secret-scanning/alerts"
+        return httpx.Response(
+            200,
+            json=[{"number": 1, "state": "open", "secret_type": "github_pat",
+                   "secret": "ghp_SHOULD_NOT_LEAK", "html_url": "u"}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.list_secret_scanning_alerts("o", "r")
+    assert result[0]["secret_type"] == "github_pat"
+    assert "secret" not in result[0]
+    assert "ghp_SHOULD_NOT_LEAK" not in str(result[0])
+
+
+async def test_list_code_scanning_alerts(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/code-scanning/alerts"
+        return httpx.Response(
+            200,
+            json=[{"number": 1, "state": "open",
+                   "rule": {"id": "py/x", "security_severity_level": "high",
+                            "description": "bad"},
+                   "tool": {"name": "CodeQL"}}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.list_code_scanning_alerts("o", "r")
+    assert result[0]["severity"] == "high"
+    assert result[0]["tool"] == "CodeQL"
+
+
+async def test_list_dependabot_alerts(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/dependabot/alerts"
+        return httpx.Response(
+            200,
+            json=[{"number": 1, "state": "open",
+                   "security_advisory": {"severity": "critical", "summary": "RCE"},
+                   "dependency": {"package": {"name": "requests",
+                                              "ecosystem": "pip"}}}],
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await alerts.list_dependabot_alerts("o", "r")
+    assert result[0]["package"] == "requests"
+    assert result[0]["severity"] == "critical"

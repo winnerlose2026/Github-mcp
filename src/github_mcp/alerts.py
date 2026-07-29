@@ -1,15 +1,7 @@
-"""Per-alert (single-alert) GitHub security tools.
+"""Security alerts: Dependabot, code scanning, and secret scanning.
 
-These complement the bulk ``list_*_alerts`` tools in :mod:`github_mcp.server`.
-The ``get_*`` tools fetch one alert's full detail by its per-repository
-``alert_number`` (the number shown by the corresponding list tool); the
-``dismiss_*`` / ``resolve_*`` tools act on a single alert and are writes, so
-they are disabled in read-only mode. ``list_security_alerts`` returns all three alert types in one call, and
-``create_issues_for_alerts`` opens a tracking issue per open alert. All
-register on the same FastMCP instance
-and reuse the server's auth/session and summarizers, so they honor the same
-token and read-only policy. The package ``__init__`` imports this module for
-the side effect of registering these tools.
+Tools register on the shared FastMCP instance from :mod:`github_mcp.core`;
+the package ``__init__`` imports this module to register them.
 """
 
 from __future__ import annotations
@@ -18,13 +10,11 @@ import re
 from typing import Any
 
 from .client import GitHubError
-from .server import (
-    _clamp,
-    _session,
+from .core import _clamp, _session, mcp
+from .summaries import (
     _summarize_code_scanning_alert,
     _summarize_dependabot_alert,
     _summarize_secret_alert,
-    mcp,
 )
 
 
@@ -143,8 +133,6 @@ async def get_secret_scanning_alert(
     return summary
 
 
-# Allowed dismissal/resolution reasons per GitHub's API. Validated client-side
-# so an invalid value fails fast with a clear message instead of a raw 422.
 _DEPENDABOT_DISMISS_REASONS = {
     "fix_started",
     "inaccurate",
@@ -152,7 +140,11 @@ _DEPENDABOT_DISMISS_REASONS = {
     "not_used",
     "tolerable_risk",
 }
+
+
 _CODE_SCANNING_DISMISS_REASONS = {"false positive", "won't fix", "used in tests"}
+
+
 _SECRET_SCANNING_RESOLUTIONS = {
     "false_positive",
     "wont_fix",
@@ -283,10 +275,9 @@ async def resolve_secret_scanning_alert(
     return summary
 
 
-# --- aggregate + automation over all alert types ---------------------------
-
-# type key -> (REST path segment, summarizer, slug used in issue markers)
 _ALERT_TYPES = ("dependabot", "code_scanning", "secret_scanning")
+
+
 _ALERT_SPECS = {
     "dependabot": ("dependabot/alerts", _summarize_dependabot_alert, "dependabot"),
     "code_scanning": (
@@ -300,6 +291,8 @@ _ALERT_SPECS = {
         "secret-scanning",
     ),
 }
+
+
 _MARKER_RE = re.compile(r"\[(security:[a-z0-9._-]+#\d+)\]")
 
 
@@ -498,3 +491,62 @@ async def create_issues_for_alerts(
     if errors:
         result["errors"] = errors
     return result
+
+
+@mcp.tool()
+async def list_secret_scanning_alerts(
+    owner: str, repo: str, state: str = "open", limit: int = 30
+) -> list[dict[str, Any]]:
+    """List secret-scanning alerts for a repository (the Security tab).
+
+    `state` is `open` (default), `resolved`, or `all`. The raw secret value is
+    never returned — only the type, state, and resolution. Requires a token with
+    access to security alerts (repo admin / `security_events`); GitHub returns
+    403/404 otherwise. Returns up to `limit` (max 100) alerts.
+    """
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
+        alerts = await gh.get(
+            f"/repos/{owner}/{repo}/secret-scanning/alerts",
+            params={"state": state, "per_page": limit},
+        )
+    return [_summarize_secret_alert(a) for a in alerts]
+
+
+@mcp.tool()
+async def list_code_scanning_alerts(
+    owner: str, repo: str, state: str = "open", limit: int = 30
+) -> list[dict[str, Any]]:
+    """List code-scanning (CodeQL etc.) alerts for a repository.
+
+    `state` is `open` (default), `dismissed`, `fixed`, or `all`. Returns each
+    alert's rule, severity, and tool. Requires a token with access to security
+    alerts. Returns up to `limit` (max 100) alerts.
+    """
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
+        alerts = await gh.get(
+            f"/repos/{owner}/{repo}/code-scanning/alerts",
+            params={"state": state, "per_page": limit},
+        )
+    return [_summarize_code_scanning_alert(a) for a in alerts]
+
+
+@mcp.tool()
+async def list_dependabot_alerts(
+    owner: str, repo: str, state: str = "open", limit: int = 30
+) -> list[dict[str, Any]]:
+    """List Dependabot (vulnerable-dependency) alerts for a repository.
+
+    `state` is `open` (default), `dismissed`, `fixed`, `auto_dismissed`, or
+    `all`. Returns the affected package, severity, and advisory summary. Requires
+    a token with access to security alerts. Returns up to `limit` (max 100)
+    alerts.
+    """
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
+        alerts = await gh.get(
+            f"/repos/{owner}/{repo}/dependabot/alerts",
+            params={"state": state, "per_page": limit},
+        )
+    return [_summarize_dependabot_alert(a) for a in alerts]

@@ -1,5 +1,7 @@
 """Tests for github_mcp.actions_config."""
 
+from __future__ import annotations
+
 import json
 from base64 import b64decode
 
@@ -7,18 +9,29 @@ import httpx
 import pytest
 from nacl import encoding, public
 
-from github_mcp import actions_config, server
+from github_mcp import actions_config, core
 from github_mcp.client import GitHubClient, GitHubError
 from github_mcp.config import Config
 
 
 def install_mock(monkeypatch, handler, *, token="test-token", read_only=False):
-    cfg = Config(token=token, api_url="https://api.github.com",
-                 read_only=read_only, timeout=5.0, user_agent="t")
+    """Point the shared session at a mocked GitHub API.
+
+    Tools call `core._session`, which reads `core.config` and
+    `core.GitHubClient`, so those are what we patch.
+    """
+    cfg = Config(
+        token=token,
+        api_url="https://api.github.com",
+        read_only=read_only,
+        timeout=5.0,
+        user_agent="test-agent",
+    )
     transport = httpx.MockTransport(handler)
-    monkeypatch.setattr(server, "config", cfg)
-    monkeypatch.setattr(server, "GitHubClient",
-                        lambda c: GitHubClient(c, transport=transport))
+    monkeypatch.setattr(core, "config", cfg)
+    monkeypatch.setattr(
+        core, "GitHubClient", lambda c: GitHubClient(c, transport=transport)
+    )
 
 
 async def test_list_repo_secrets_names_only(monkeypatch):

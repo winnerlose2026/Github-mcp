@@ -1,11 +1,7 @@
-"""GitHub Actions configuration: secrets, variables, and run artifacts.
+"""Actions configuration: secrets, variables, and run artifacts.
 
-Complements the workflow tools in :mod:`github_mcp.server` and
-:mod:`github_mcp.actions`. Secrets are write-encrypted with the repository's
-public key (libsodium sealed box, via PyNaCl) so plaintext never leaves this
-process; secret values are never read back. Variables are plaintext config.
-Write tools are disabled in read-only mode. The package ``__init__`` imports
-this module to register them.
+Tools register on the shared FastMCP instance from :mod:`github_mcp.core`;
+the package ``__init__`` imports this module to register them.
 """
 
 from __future__ import annotations
@@ -14,7 +10,7 @@ from base64 import b64decode, b64encode
 from typing import Any
 
 from .client import GitHubError
-from .server import _clamp, _session, mcp
+from .core import _clamp, _session, mcp
 
 
 @mcp.tool()
