@@ -19,17 +19,22 @@ async def list_commits(
     sha: str | None = None,
     path: str | None = None,
     limit: int = 20,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List recent commits on a repository.
 
     Optionally narrow to a branch/SHA via `sha` or to commits touching a single
     file via `path`. Returns up to `limit` (max 50) commits.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 50)
     async with _session() as gh:
         commits = await gh.get(
             f"/repos/{owner}/{repo}/commits",
-            params={"sha": sha, "path": path, "per_page": limit},
+            params={"sha": sha, "path": path, "per_page": limit, "page": page},
         )
     return [_summarize_commit(commit) for commit in commits]
 
@@ -99,18 +104,23 @@ async def get_combined_status(owner: str, repo: str, ref: str) -> dict[str, Any]
 
 @mcp.tool()
 async def list_check_runs(
-    owner: str, repo: str, ref: str, limit: int = 30
+    owner: str, repo: str, ref: str, limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the check runs for a ref (branch, tag, or SHA).
 
     These are the GitHub Actions / app check results for the commit. Use this to
     inspect CI on any ref without going through a pull request. Returns up to
     `limit` (max 100) check runs.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         result = await gh.get(
             f"/repos/{owner}/{repo}/commits/{ref}/check-runs",
-            params={"per_page": limit},
+            params={"per_page": limit, "page": page},
         )
     return [_summarize_check_run(c) for c in result.get("check_runs", [])]

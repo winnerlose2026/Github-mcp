@@ -227,17 +227,22 @@ async def upload_release_asset(
 
 @mcp.tool()
 async def list_releases(
-    owner: str, repo: str, limit: int = 20
+    owner: str, repo: str, limit: int = 20,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List releases for a repository, newest first.
 
     Returns up to `limit` (max 50) releases with tag, name, draft/prerelease
     flags, and publish date.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 50)
     async with _session() as gh:
         releases = await gh.get(
-            f"/repos/{owner}/{repo}/releases", params={"per_page": limit}
+            f"/repos/{owner}/{repo}/releases", params={"per_page": limit, "page": page}
         )
     return [_summarize_release(r) for r in releases]
 
@@ -314,11 +319,15 @@ async def create_release(
 
 
 @mcp.tool()
-async def list_tags(owner: str, repo: str, limit: int = 30) -> list[dict[str, Any]]:
-    """List git tags in a repository, with the commit SHA each points at."""
+async def list_tags(owner: str, repo: str, limit: int = 30, page: int = 1) -> list[dict[str, Any]]:
+    """List git tags in a repository, with the commit SHA each points at.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on."""
     limit = _clamp(limit, 100)
     async with _session() as gh:
-        tags = await gh.get(f"/repos/{owner}/{repo}/tags", params={"per_page": limit})
+        tags = await gh.get(f"/repos/{owner}/{repo}/tags", params={"per_page": limit, "page": page})
     return [
         {
             "name": tag.get("name"),

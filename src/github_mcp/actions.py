@@ -16,17 +16,21 @@ from .summaries import _summarize_job, _summarize_workflow_run
 
 
 @mcp.tool()
-async def list_workflows(owner: str, repo: str, limit: int = 30) -> list[dict[str, Any]]:
+async def list_workflows(owner: str, repo: str, limit: int = 30, page: int = 1) -> list[dict[str, Any]]:
     """List the workflow definitions in a repository (gh workflow list).
 
     These are the workflows under `.github/workflows` (the `id`/`name` you'd
     dispatch with `trigger_workflow`), not individual runs. Returns up to `limit`
     (max 100) workflows with their id, name, path, and state.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         result = await gh.get(
-            f"/repos/{owner}/{repo}/actions/workflows", params={"per_page": limit}
+            f"/repos/{owner}/{repo}/actions/workflows", params={"per_page": limit, "page": page}
         )
     return [
         {
@@ -64,25 +68,31 @@ async def list_workflow_runs(
     branch: str | None = None,
     status: str | None = None,
     limit: int = 20,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List recent GitHub Actions workflow runs for a repository.
 
     Optionally filter by `branch` or by `status` (e.g. `completed`,
     `in_progress`, `queued`, `failure`, `success`). Returns up to `limit`
     (max 50) runs, newest first.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 50)
     async with _session() as gh:
         result = await gh.get(
             f"/repos/{owner}/{repo}/actions/runs",
-            params={"branch": branch, "status": status, "per_page": limit},
+            params={"branch": branch, "status": status, "per_page": limit, "page": page},
         )
     return [_summarize_workflow_run(run) for run in result.get("workflow_runs", [])]
 
 
 @mcp.tool()
 async def list_workflow_run_jobs(
-    owner: str, repo: str, run_id: int, filter: str = "latest", limit: int = 30
+    owner: str, repo: str, run_id: int, filter: str = "latest", limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the jobs of a GitHub Actions workflow run.
 
@@ -90,12 +100,16 @@ async def list_workflow_run_jobs(
     `failed_steps`) and to get each job's `id` for `get_job_logs`. `filter` is
     `latest` (default) or `all` (include earlier attempts). Returns up to `limit`
     (max 100) jobs.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         result = await gh.get(
             f"/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
-            params={"filter": filter, "per_page": limit},
+            params={"filter": filter, "per_page": limit, "page": page},
         )
     return [_summarize_job(j) for j in result.get("jobs", [])]
 

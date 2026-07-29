@@ -25,6 +25,9 @@ Enterprise Server.
 - 🔐 **Security** — secret-scanning, code-scanning, and Dependabot alerts (list each or all-in-one, fetch one by number, dismiss/resolve, and open tracking issues per alert)
 - 🔔 **Notifications** — list and mark read across all your repos
 - ✍️ **Repo writes** — create/fork repos, create branches, commit/delete files, manage labels (create/edit/delete) & assignees, request PR reviewers, create/edit gists (gated by read-only mode)
+- 📄 **Pagination** — every list tool takes `page`, so you can read past the first 100 items
+- ♻️ **Resilient** — honours `Retry-After` and rate-limit headers; retries transient failures (never replaying a write)
+- 🎯 **Scopable** — `GITHUB_MCP_TOOLS` loads only the tool groups you need
 - 🔒 **Read-only mode** — flip one env var to disable every write tool
 - 🏢 **Enterprise-friendly** — set `GITHUB_API_URL` for GitHub Enterprise Server
 
@@ -293,6 +296,8 @@ All configuration comes from environment variables (see [`.env.example`](.env.ex
 | `GITHUB_API_URL` | no | `https://api.github.com` | API root; set for GitHub Enterprise Server (e.g. `https://ghe.example.com/api/v3`). |
 | `GITHUB_MCP_READ_ONLY` | no | `false` | When truthy, disables all write tools. |
 | `GITHUB_MCP_TIMEOUT` | no | `30` | Per-request timeout in seconds. |
+| `GITHUB_MCP_MAX_RETRIES` | no | `3` | Retries for throttled requests (429 / rate-limited 403) and, for reads only, transient 5xx. Set `0` to disable. |
+| `GITHUB_MCP_TOOLS` | no | *(all)* | Comma- or space-separated tool groups to load, e.g. `issues,pulls,repos`. Loading fewer groups shrinks the tool list each client session carries. Valid groups: `account`, `actions`, `actions_config`, `alerts`, `commits`, `deployments`, `files`, `gists`, `issues`, `notifications`, `pulls`, `releases`, `repos`, `search`. |
 | `GITHUB_MCP_USER_AGENT` | no | `github-mcp-connector` | `User-Agent` header sent to GitHub. |
 
 ## Connecting to Claude (from-source install)
