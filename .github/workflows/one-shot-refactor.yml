@@ -5,10 +5,13 @@ name: One-shot refactor
 # verified locally to reproduce the exact pre-refactor tool fingerprint, and this
 # job re-checks that hash before it is allowed to commit anything.
 #
-# Delete this workflow (and scripts/_refactor/) once the split has landed.
+# Scoped to this branch on purpose (workflow_dispatch would require the file to
+# live on the default branch). Delete this workflow and scripts/_refactor/ once
+# the split has landed.
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [refactor/split-server-into-domains]
 
 permissions:
   contents: write
@@ -19,17 +22,32 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Guard: the split is not idempotent (it reads tools out of server.py), so
+      # skip everything if it has already been applied on this branch.
+      - id: check
+        name: Has the split already run?
+        run: |
+          if [ -f src/github_mcp/core.py ]; then
+            echo "Already split; nothing to do."
+            echo "todo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "todo=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v6
+        if: steps.check.outputs.todo == 'true'
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install package with dev dependencies
+        if: steps.check.outputs.todo == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
       - name: Record the pre-refactor tool fingerprint
+        if: steps.check.outputs.todo == 'true'
         run: |
           python - <<'PY'
           import asyncio, hashlib, json
@@ -44,25 +62,31 @@ jobs:
           PY
 
       - name: Split server.py into domain modules
+        if: steps.check.outputs.todo == 'true'
         run: python scripts/_refactor/split_modules.py
 
       - name: Retarget the test suite
+        if: steps.check.outputs.todo == 'true'
         run: python scripts/_refactor/split_tests.py
 
       # The throwaway scripts are excluded: they are deleted before this branch
       # is merged, so their own style is not worth gating on.
       - name: Format imports and lint
+        if: steps.check.outputs.todo == 'true'
         run: |
           ruff check . --exclude scripts/_refactor --fix
           ruff check . --exclude scripts/_refactor
 
       - name: Run tests
+        if: steps.check.outputs.todo == 'true'
         run: pytest -q
 
       - name: Launch the server and complete an MCP handshake
+        if: steps.check.outputs.todo == 'true'
         run: python scripts/smoke_stdio.py --min-tools 100
 
       - name: Assert the tool surface did not change
+        if: steps.check.outputs.todo == 'true'
         run: |
           python - <<'PY'
           import asyncio, hashlib, json, sys
@@ -81,11 +105,13 @@ jobs:
           PY
 
       - name: Commit the refactor
+        if: steps.check.outputs.todo == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Split server.py into domain modules
+          git commit -F - <<'MSG'
+          Split server.py into domain modules
 
           Moves the FastMCP instance and session plumbing into core.py, the
           response summarizers into summaries.py, and every tool into a module
@@ -94,5 +120,6 @@ jobs:
 
           Performed by scripts/_refactor/, which this job verified reproduces the
           pre-refactor tool fingerprint byte for byte: 122 tools with identical
-          names, descriptions, and input schemas."
+          names, descriptions, and input schemas.
+          MSG
           git push
