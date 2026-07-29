@@ -4,6 +4,31 @@ All notable changes to this project are documented here. Versions follow
 [Semantic Versioning](https://semver.org/); the project is pre-1.0, so minor
 bumps may add sizeable batches of tools.
 
+## [0.17.0] — 2026-07-29
+
+### Changed
+- **`server.py` split into domain modules.** It had grown to 2,074 lines doing two
+  unrelated jobs: holding the package's shared foundation *and* acting as a
+  70-tool grab bag that nine sibling modules reached into. Now:
+  - `core.py` — the FastMCP instance, resolved config, and the auth/session
+    plumbing every tool runs through. Nothing in it imports a tool module, so
+    there are no cycles.
+  - `summaries.py` — the 16 response-shaping helpers.
+  - Tools live in modules named for their domain: `account`, `search`, `repos`,
+    `files`, `commits`, `issues`, `pulls`, `actions`, `actions_config`,
+    `releases`, `alerts`, `gists`, `notifications`, `deployments`.
+  - `server.py` is now just the console entry point (34 lines).
+- **Dissolved the `extras.py` and `repo_admin.py` junk drawers**; their tools moved
+  to the domain they belong to.
+- Tests mirror the new layout — `test_server.py` was split the same way, and
+  `install_mock` now patches `core` (where `_session` lives).
+
+Purely a move: **the tool surface is byte-identical**. All 122 tools keep the same
+names, descriptions, and input schemas — asserted by comparing a SHA-256
+fingerprint of the full tool list before and after
+(`c5f84390cb200f41b5ab0df90cab0c43a57d0a5045cfff0c49625bfbe7db8d90`). No action
+needed by users of the connector.
+
 ## [0.16.0] — 2026-07-29
 
 ### Fixed
