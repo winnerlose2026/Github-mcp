@@ -46,7 +46,7 @@ class Config:
     user_agent: str
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls) -> Config:
         api_url = os.environ.get("GITHUB_API_URL", DEFAULT_API_URL).rstrip("/")
         timeout_raw = os.environ.get("GITHUB_MCP_TIMEOUT", "30")
         try:
