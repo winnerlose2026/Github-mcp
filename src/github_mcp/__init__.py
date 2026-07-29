@@ -25,7 +25,7 @@ from . import repos as repos  # noqa: F401
 from . import search as search  # noqa: F401
 from . import summaries as summaries  # noqa: F401
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
 __all__ = [
     "__version__",
