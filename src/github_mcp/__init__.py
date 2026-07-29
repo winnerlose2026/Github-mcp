@@ -14,18 +14,21 @@ pull requests, commits, and code, and optionally open issues and comments.
 # (Actions secrets/variables/artifacts), `repo_admin` (collaborator & branch
 # protection writes, branch merges), and `extras` (PR-branch sync, comment
 # edits, release-asset and gist deletes, notifications).
-from . import server as server  # noqa: F401
-from . import alerts as alerts  # noqa: F401
-from . import releases as releases  # noqa: F401
+# The import order here is alphabetical (enforced by ruff) and does not
+# matter: each module does `from .server import mcp`, so importing any of
+# them initializes `server` and the shared instance first.
 from . import actions as actions  # noqa: F401
-from . import repos as repos  # noqa: F401
-from . import issues as issues  # noqa: F401
-from . import deployments as deployments  # noqa: F401
 from . import actions_config as actions_config  # noqa: F401
-from . import repo_admin as repo_admin  # noqa: F401
+from . import alerts as alerts  # noqa: F401
+from . import deployments as deployments  # noqa: F401
 from . import extras as extras  # noqa: F401
+from . import issues as issues  # noqa: F401
+from . import releases as releases  # noqa: F401
+from . import repo_admin as repo_admin  # noqa: F401
+from . import repos as repos  # noqa: F401
+from . import server as server  # noqa: F401
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
 __all__ = [
     "__version__",
