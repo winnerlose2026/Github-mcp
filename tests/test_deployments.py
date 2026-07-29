@@ -1,22 +1,35 @@
 """Tests for github_mcp.deployments."""
 
+from __future__ import annotations
+
 import json
 
 import httpx
 import pytest
 
-from github_mcp import deployments, server
+from github_mcp import core, deployments
 from github_mcp.client import GitHubClient, GitHubError
 from github_mcp.config import Config
 
 
 def install_mock(monkeypatch, handler, *, token="test-token", read_only=False):
-    cfg = Config(token=token, api_url="https://api.github.com",
-                 read_only=read_only, timeout=5.0, user_agent="t")
+    """Point the shared session at a mocked GitHub API.
+
+    Tools call `core._session`, which reads `core.config` and
+    `core.GitHubClient`, so those are what we patch.
+    """
+    cfg = Config(
+        token=token,
+        api_url="https://api.github.com",
+        read_only=read_only,
+        timeout=5.0,
+        user_agent="test-agent",
+    )
     transport = httpx.MockTransport(handler)
-    monkeypatch.setattr(server, "config", cfg)
-    monkeypatch.setattr(server, "GitHubClient",
-                        lambda c: GitHubClient(c, transport=transport))
+    monkeypatch.setattr(core, "config", cfg)
+    monkeypatch.setattr(
+        core, "GitHubClient", lambda c: GitHubClient(c, transport=transport)
+    )
 
 
 async def test_list_pending_deployments(monkeypatch):

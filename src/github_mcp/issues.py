@@ -1,20 +1,17 @@
-"""Additional issue, milestone, and pull-request tools.
+"""Issues: read/write, comments, labels, assignees, milestones, locking.
 
-Complements the core issue/PR tools in :mod:`github_mcp.server` (``list_issues``,
-``create_issue``, ``update_issue``). This module adds milestones
-(``list_milestones``/``create_milestone``), issue locking
-(``lock_issue``/``unlock_issue``), and a PR's commit list
-(``list_pull_request_commits``). They register on the shared FastMCP instance
-and reuse the server's auth/session and summarizers, so they honor the same
-token and read-only policy; the package ``__init__`` imports this module for the
-side effect of registering them.
+Tools register on the shared FastMCP instance from :mod:`github_mcp.core`;
+the package ``__init__`` imports this module to register them.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
-from .server import _clamp, _session, _summarize_commit, mcp
+from .client import GitHubError
+from .core import _clamp, _session, mcp
+from .summaries import _summarize_comment, _summarize_commit, _summarize_issue
 
 
 @mcp.tool()
@@ -125,3 +122,321 @@ async def list_pull_request_commits(
             params={"per_page": limit},
         )
     return [_summarize_commit(c) for c in commits]
+
+
+@mcp.tool()
+async def list_issues(
+    owner: str,
+    repo: str,
+    state: str = "open",
+    labels: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """List issues in a repository.
+
+    `state` is one of `open`, `closed`, or `all`. `labels` is an optional
+    comma-separated list of label names to filter by. Note: GitHub's issues
+    endpoint also returns pull requests; check `is_pull_request` on each item.
+    """
+    limit = _clamp(limit, 50)
+    async with _session() as gh:
+        issues = await gh.get(
+            f"/repos/{owner}/{repo}/issues",
+            params={"state": state, "labels": labels, "per_page": limit},
+        )
+    return [_summarize_issue(issue) for issue in issues]
+
+
+@mcp.tool()
+async def get_issue(owner: str, repo: str, issue_number: int) -> dict[str, Any]:
+    """Get a single issue including its full body text."""
+    async with _session() as gh:
+        issue = await gh.get(f"/repos/{owner}/{repo}/issues/{issue_number}")
+    summary = _summarize_issue(issue)
+    summary["body"] = issue.get("body")
+    return summary
+
+
+@mcp.tool()
+async def create_issue(
+    owner: str,
+    repo: str,
+    title: str,
+    body: str | None = None,
+    labels: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create a new issue in a repository.
+
+    Disabled when the connector runs in read-only mode. Requires a token with
+    write access to the repository.
+    """
+    payload: dict[str, Any] = {"title": title}
+    if body is not None:
+        payload["body"] = body
+    if labels:
+        payload["labels"] = labels
+    async with _session(write=True) as gh:
+        issue = await gh.post(f"/repos/{owner}/{repo}/issues", json=payload)
+    summary = _summarize_issue(issue)
+    summary["body"] = issue.get("body")
+    return summary
+
+
+@mcp.tool()
+async def update_issue(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    title: str | None = None,
+    body: str | None = None,
+    state: str | None = None,
+    labels: list[str] | None = None,
+) -> dict[str, Any]:
+    """Edit an existing issue: change its title, body, labels, or state.
+
+    Pass `state` as `closed` to close an issue or `open` to reopen it. Only the
+    fields you provide are changed. Disabled in read-only mode; requires a token
+    with write access.
+    """
+    payload: dict[str, Any] = {}
+    if title is not None:
+        payload["title"] = title
+    if body is not None:
+        payload["body"] = body
+    if state is not None:
+        payload["state"] = state
+    if labels is not None:
+        payload["labels"] = labels
+    if not payload:
+        raise GitHubError(
+            400,
+            "PATCH",
+            f"/repos/{owner}/{repo}/issues/{issue_number}",
+            "Nothing to update: provide at least one of title, body, state, labels.",
+        )
+    async with _session(write=True) as gh:
+        issue = await gh.patch(
+            f"/repos/{owner}/{repo}/issues/{issue_number}", json=payload
+        )
+    summary = _summarize_issue(issue)
+    summary["body"] = issue.get("body")
+    return summary
+
+
+@mcp.tool()
+async def add_issue_comment(
+    owner: str, repo: str, issue_number: int, body: str
+) -> dict[str, Any]:
+    """Add a comment to an issue or pull request.
+
+    Disabled when the connector runs in read-only mode. Requires a token with
+    write access to the repository.
+    """
+    async with _session(write=True) as gh:
+        comment = await gh.post(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            json={"body": body},
+        )
+    return {
+        "id": comment.get("id"),
+        "user": (comment.get("user") or {}).get("login"),
+        "html_url": comment.get("html_url"),
+        "created_at": comment.get("created_at"),
+    }
+
+
+@mcp.tool()
+async def list_issue_comments(
+    owner: str, repo: str, issue_number: int, limit: int = 30
+) -> list[dict[str, Any]]:
+    """List the conversation comments on an issue or pull request.
+
+    These are the top-level timeline comments (not inline code-review comments —
+    use `list_pull_request_review_comments` for those). Returns up to `limit`
+    (max 100) comments.
+    """
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
+        comments = await gh.get(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            params={"per_page": limit},
+        )
+    return [_summarize_comment(c) for c in comments]
+
+
+@mcp.tool()
+async def add_labels(
+    owner: str, repo: str, issue_number: int, labels: list[str]
+) -> dict[str, Any]:
+    """Add labels to an issue or pull request (existing labels are kept).
+
+    Disabled in read-only mode; requires write access.
+    """
+    async with _session(write=True) as gh:
+        result = await gh.post(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/labels",
+            json={"labels": labels},
+        )
+    return {"labels": [lbl.get("name") for lbl in result]}
+
+
+@mcp.tool()
+async def remove_label(
+    owner: str, repo: str, issue_number: int, label: str
+) -> dict[str, Any]:
+    """Remove a single label from an issue or pull request.
+
+    Disabled in read-only mode; requires write access.
+    """
+    # Label names can contain spaces and slashes (e.g. "good first issue",
+    # "type/bug"); percent-encode the segment so the path stays correct.
+    async with _session(write=True) as gh:
+        result = await gh.delete(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/labels/{quote(label, safe='')}"
+        )
+    remaining = (
+        [lbl.get("name") for lbl in result] if isinstance(result, list) else []
+    )
+    return {"removed": label, "labels": remaining}
+
+
+@mcp.tool()
+async def add_assignees(
+    owner: str, repo: str, issue_number: int, assignees: list[str]
+) -> dict[str, Any]:
+    """Assign users to an issue or pull request.
+
+    `assignees` is a list of GitHub logins. Disabled in read-only mode; requires
+    write access.
+    """
+    async with _session(write=True) as gh:
+        result = await gh.post(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/assignees",
+            json={"assignees": assignees},
+        )
+    return {
+        "number": result.get("number"),
+        "assignees": [a.get("login") for a in result.get("assignees", [])],
+    }
+
+
+@mcp.tool()
+async def list_labels(owner: str, repo: str, limit: int = 50) -> list[dict[str, Any]]:
+    """List the labels defined in a repository (gh label list).
+
+    Returns each label's name, color (hex, no leading `#`), and description, up to
+    `limit` (max 100).
+    """
+    limit = _clamp(limit, 100)
+    async with _session() as gh:
+        labels = await gh.get(
+            f"/repos/{owner}/{repo}/labels", params={"per_page": limit}
+        )
+    return [
+        {
+            "name": label.get("name"),
+            "color": label.get("color"),
+            "description": label.get("description"),
+        }
+        for label in labels
+    ]
+
+
+@mcp.tool()
+async def create_label(
+    owner: str,
+    repo: str,
+    name: str,
+    color: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Create a label in a repository (gh label create).
+
+    `color` is a 6-character hex code without the leading `#` (e.g. `d73a4a`); if
+    omitted GitHub assigns a default. Disabled in read-only mode; requires write
+    access.
+    """
+    payload: dict[str, Any] = {"name": name}
+    if color is not None:
+        payload["color"] = color.lstrip("#")
+    if description is not None:
+        payload["description"] = description
+    async with _session(write=True) as gh:
+        label = await gh.post(f"/repos/{owner}/{repo}/labels", json=payload)
+    return {
+        "name": label.get("name"),
+        "color": label.get("color"),
+        "description": label.get("description"),
+    }
+
+
+@mcp.tool()
+async def update_label(
+    owner: str,
+    repo: str,
+    name: str,
+    new_name: str | None = None,
+    color: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Edit an existing label (gh label edit).
+
+    `name` selects the label to change; pass `new_name` to rename it, and/or
+    `color` (6-char hex, leading `#` optional) and `description` to update those.
+    Disabled in read-only mode; requires write access.
+    """
+    payload: dict[str, Any] = {}
+    if new_name is not None:
+        payload["new_name"] = new_name
+    if color is not None:
+        payload["color"] = color.lstrip("#")
+    if description is not None:
+        payload["description"] = description
+    async with _session(write=True) as gh:
+        label = await gh.patch(
+            f"/repos/{owner}/{repo}/labels/{quote(name)}", json=payload
+        )
+    return {
+        "name": label.get("name"),
+        "color": label.get("color"),
+        "description": label.get("description"),
+    }
+
+
+@mcp.tool()
+async def delete_label(owner: str, repo: str, name: str) -> dict[str, Any]:
+    """Delete a label from a repository (gh label delete).
+
+    Removes the label `name` and unsets it from every issue/PR that had it. This
+    cannot be undone. Disabled in read-only mode; requires write access.
+    """
+    async with _session(write=True) as gh:
+        await gh.delete(f"/repos/{owner}/{repo}/labels/{quote(name)}")
+    return {"deleted": True, "name": name}
+
+
+@mcp.tool()
+async def update_issue_comment(
+    owner: str, repo: str, comment_id: int, body: str
+) -> dict[str, Any]:
+    """Edit an existing issue or PR conversation comment (a gated write).
+
+    `comment_id` is the numeric id from `list_issue_comments`. Replaces the
+    comment's body.
+    """
+    async with _session(write=True) as gh:
+        comment = await gh.patch(
+            f"/repos/{owner}/{repo}/issues/comments/{comment_id}",
+            json={"body": body},
+        )
+    return _summarize_comment(comment)
+
+
+@mcp.tool()
+async def delete_issue_comment(
+    owner: str, repo: str, comment_id: int
+) -> dict[str, Any]:
+    """Delete an issue or PR conversation comment (a gated write)."""
+    async with _session(write=True) as gh:
+        await gh.delete(f"/repos/{owner}/{repo}/issues/comments/{comment_id}")
+    return {"deleted": True, "comment_id": comment_id}

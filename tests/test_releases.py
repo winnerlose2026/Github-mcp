@@ -1,18 +1,22 @@
-"""Tests for the release/tag deletion tools in github_mcp.releases."""
+"""Tests for github_mcp.releases."""
+
+from __future__ import annotations
+
+import json
 
 import httpx
 import pytest
 
-from github_mcp import releases, server
+from github_mcp import core, releases
 from github_mcp.client import GitHubClient, GitHubError
 from github_mcp.config import Config
 
 
 def install_mock(monkeypatch, handler, *, token="test-token", read_only=False):
-    """Point the server's session at a mocked GitHub API.
+    """Point the shared session at a mocked GitHub API.
 
-    The deletion tools call `server._session`, which reads `server.config` and
-    `server.GitHubClient`, so those are what we patch.
+    Tools call `core._session`, which reads `core.config` and
+    `core.GitHubClient`, so those are what we patch.
     """
     cfg = Config(
         token=token,
@@ -22,11 +26,9 @@ def install_mock(monkeypatch, handler, *, token="test-token", read_only=False):
         user_agent="test-agent",
     )
     transport = httpx.MockTransport(handler)
-    monkeypatch.setattr(server, "config", cfg)
+    monkeypatch.setattr(core, "config", cfg)
     monkeypatch.setattr(
-        server,
-        "GitHubClient",
-        lambda c: GitHubClient(c, transport=transport),
+        core, "GitHubClient", lambda c: GitHubClient(c, transport=transport)
     )
 
 
@@ -132,7 +134,6 @@ async def test_delete_release_and_tag_tolerates_missing_release(monkeypatch):
 
 
 async def test_update_release_by_tag_resolves_then_patches(monkeypatch):
-    import json
     captured = {}
 
     def handler(request):
@@ -159,7 +160,6 @@ async def test_update_release_requires_identifier(monkeypatch):
 
 
 async def test_generate_release_notes(monkeypatch):
-    import json
     captured = {}
 
     def handler(request):
@@ -225,3 +225,158 @@ async def test_upload_release_asset_read_only(monkeypatch):
     with pytest.raises(GitHubError) as exc:
         await releases.upload_release_asset("o", "r", "v1", "a.bin", "YWJj")
     assert exc.value.status_code == 403
+
+
+async def test_list_releases(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/releases"
+        return httpx.Response(
+            200, json=[{"tag_name": "v1.0.0", "name": "v1", "draft": False}]
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await releases.list_releases("o", "r")
+    assert result[0]["tag_name"] == "v1.0.0"
+
+
+async def test_create_release_blocked_in_read_only(monkeypatch):
+    install_mock(monkeypatch, lambda r: httpx.Response(201, json={}),
+                 read_only=True)
+    with pytest.raises(GitHubError) as exc:
+        await releases.create_release("o", "r", "v1.0.0")
+    assert exc.value.status_code == 403
+
+
+async def test_create_release_posts_payload(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        assert request.method == "POST"
+        assert request.url.path == "/repos/o/r/releases"
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={"id": 99, "tag_name": "v1.0.0", "name": "v1.0.0",
+                  "draft": False, "prerelease": False, "body": "notes",
+                  "html_url": "u"},
+        )
+
+    install_mock(monkeypatch, handler)
+    result = await releases.create_release(
+        "o", "r", "v1.0.0", target_commitish="main", name="v1.0.0",
+        body="notes", generate_release_notes=True
+    )
+    assert captured["body"]["tag_name"] == "v1.0.0"
+    assert captured["body"]["target_commitish"] == "main"
+    assert captured["body"]["generate_release_notes"] is True
+    assert captured["body"]["draft"] is False
+    assert result["tag_name"] == "v1.0.0"
+    assert result["id"] == 99
+    assert result["body"] == "notes"
+
+
+async def test_create_release_surfaces_existing_tag_error(monkeypatch):
+    def handler(request):
+        return httpx.Response(
+            422, json={"message": "Validation Failed",
+                       "errors": [{"code": "already_exists", "field": "tag_name"}]}
+        )
+
+    install_mock(monkeypatch, handler)
+    with pytest.raises(GitHubError) as exc:
+        await releases.create_release("o", "r", "v1.0.0")
+    assert exc.value.status_code == 422
+
+
+async def test_list_tags(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/tags"
+        return httpx.Response(200, json=[
+            {"name": "v1.0", "commit": {"sha": "deadbeef"}}])
+
+    install_mock(monkeypatch, handler)
+    result = await releases.list_tags("o", "r")
+    assert result[0]["name"] == "v1.0"
+    assert result[0]["sha"] == "deadbeef"
+
+
+async def test_get_tag_resolves_commit(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/commits/tags/v1.2.0"
+        return httpx.Response(200, json={
+            "sha": "abc", "commit": {"message": "release",
+                                     "author": {"name": "JD", "date": "2024"}}})
+
+    install_mock(monkeypatch, handler)
+    result = await releases.get_tag("o", "r", "v1.2.0")
+    assert result["tag"] == "v1.2.0"
+    assert result["sha"] == "abc"
+
+
+async def test_get_latest_release(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/releases/latest"
+        return httpx.Response(200, json={"tag_name": "v2.0", "name": "v2.0",
+                                         "draft": False, "prerelease": False})
+
+    install_mock(monkeypatch, handler)
+    result = await releases.get_latest_release("o", "r")
+    assert result["tag_name"] == "v2.0"
+
+
+async def test_get_release_by_tag(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/releases/tags/v1.2.0"
+        return httpx.Response(200, json={"tag_name": "v1.2.0", "name": "v1.2.0",
+                                         "draft": False, "prerelease": False})
+
+    install_mock(monkeypatch, handler)
+    result = await releases.get_release_by_tag("o", "r", "v1.2.0")
+    assert result["tag_name"] == "v1.2.0"
+
+
+async def test_get_tag_allows_slashes(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["path"] = request.url.path
+        return httpx.Response(200, json={"sha": "abc",
+                                         "commit": {"message": "m",
+                                                    "author": {"name": "JD"}}})
+
+    install_mock(monkeypatch, handler)
+    await releases.get_tag("o", "r", "release/1.0")
+    assert captured["path"] == "/repos/o/r/commits/tags/release/1.0"
+
+
+async def test_session_requires_token_first(monkeypatch):
+    # The _session() context manager should reject calls with no token before
+    # attempting any request (covers the streamlined auth path).
+    install_mock(monkeypatch, lambda r: httpx.Response(200, json={}), token=None)
+    with pytest.raises(GitHubError) as exc:
+        await releases.list_tags("o", "r")
+    assert exc.value.status_code == 401
+
+
+async def test_delete_release_asset(monkeypatch):
+    def handler(request):
+        assert request.method == "DELETE"
+        assert request.url.path == "/repos/o/r/releases/assets/12"
+        return httpx.Response(204)
+
+    install_mock(monkeypatch, handler)
+    result = await releases.delete_release_asset("o", "r", 12)
+    assert result == {"deleted": True, "asset_id": 12}
+
+
+async def test_download_release_asset_returns_url(monkeypatch):
+    def handler(request):
+        assert request.url.path == "/repos/o/r/releases/assets/12"
+        return httpx.Response(200, json={"id": 12, "name": "wheel.whl",
+            "size": 50, "content_type": "application/zip", "download_count": 3,
+            "browser_download_url": "https://x/wheel.whl"})
+
+    install_mock(monkeypatch, handler)
+    result = await releases.download_release_asset("o", "r", 12)
+    assert result["browser_download_url"] == "https://x/wheel.whl"
+    assert result["name"] == "wheel.whl"
