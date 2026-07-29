@@ -1,10 +1,9 @@
 """Tests for github_mcp.issues."""
 
 import httpx
-import pytest
 
 from github_mcp import issues, server
-from github_mcp.client import GitHubClient, GitHubError
+from github_mcp.client import GitHubClient
 from github_mcp.config import Config
 
 
