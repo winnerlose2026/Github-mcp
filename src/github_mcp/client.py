@@ -1,12 +1,16 @@
 """A thin async wrapper around the GitHub REST API.
 
 The wrapper is intentionally small: it handles authentication, the standard
-headers GitHub expects, error translation, and a tiny bit of pagination. Each
-MCP tool in :mod:`github_mcp.server` builds on top of these primitives.
+headers GitHub expects, error translation, and retrying the failures worth
+retrying. The tool modules (see the package ``__init__``) build on these
+primitives; page selection is the tools' own `page` argument.
 """
 
 from __future__ import annotations
 
+import asyncio
+import random
+import time
 from typing import Any
 
 import httpx
@@ -15,6 +19,56 @@ from .config import Config
 
 GITHUB_ACCEPT = "application/vnd.github+json"
 GITHUB_API_VERSION = "2022-11-28"
+
+# Statuses worth another attempt. A 429, or a 403 that is really a rate limit,
+# means GitHub rejected the request without processing it, so retrying is safe
+# for any method. A 5xx is ambiguous for writes -- the change may already have
+# applied -- so those are retried for reads only (see `_should_retry`).
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_MAX_BACKOFF_SECONDS = 60.0
+
+
+def _is_rate_limited(response: httpx.Response) -> bool:
+    """True when GitHub is throttling us rather than refusing the request."""
+    if response.status_code == 429:
+        return True
+    if response.status_code != 403:
+        return False
+    if response.headers.get("x-ratelimit-remaining") == "0":
+        return True
+    body = response.text[:500].lower()
+    return "rate limit" in body or "abuse detection" in body
+
+
+def _should_retry(method: str, response: httpx.Response) -> bool:
+    if _is_rate_limited(response):
+        return True
+    if response.status_code in _RETRY_STATUSES:
+        # Reads only: replaying a POST/PATCH/DELETE that may have been applied
+        # could double-create or double-delete.
+        return method in ("GET", "HEAD")
+    return False
+
+
+def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    """Wait time, preferring GitHub's own guidance over guesswork."""
+    retry_after = response.headers.get("retry-after")
+    if retry_after:
+        try:
+            return min(float(retry_after), _MAX_BACKOFF_SECONDS)
+        except ValueError:
+            pass
+    if response.headers.get("x-ratelimit-remaining") == "0":
+        reset = response.headers.get("x-ratelimit-reset")
+        if reset:
+            try:
+                wait = float(reset) - time.time()
+            except ValueError:
+                wait = 0.0
+            if wait > 0:
+                return min(wait, _MAX_BACKOFF_SECONDS)
+    # Exponential with jitter, so retries from concurrent tools don't align.
+    return min(2.0**attempt + random.uniform(0, 0.5), _MAX_BACKOFF_SECONDS)
 
 
 class GitHubError(RuntimeError):
@@ -94,17 +148,26 @@ class GitHubClient:
         clean_params = (
             {k: v for k, v in params.items() if v is not None} if params else None
         )
-        try:
-            response = await self._client.request(
-                method,
-                path,
-                params=clean_params,
-                json=json,
-                content=content,
-                headers=headers or None,
-            )
-        except httpx.HTTPError as exc:  # network/timeout errors
-            raise GitHubError(0, method, path, f"request error: {exc}") from exc
+        attempts = self._config.max_retries + 1
+        for attempt in range(attempts):
+            try:
+                response = await self._client.request(
+                    method,
+                    path,
+                    params=clean_params,
+                    json=json,
+                    content=content,
+                    headers=headers or None,
+                )
+            except httpx.HTTPError as exc:  # network/timeout errors
+                if method in ("GET", "HEAD") and attempt < attempts - 1:
+                    await asyncio.sleep(min(2.0**attempt, _MAX_BACKOFF_SECONDS))
+                    continue
+                raise GitHubError(0, method, path, f"request error: {exc}") from exc
+            if attempt < attempts - 1 and _should_retry(method, response):
+                await asyncio.sleep(_retry_delay(response, attempt))
+                continue
+            break
 
         if response.status_code >= 400:
             raise GitHubError(

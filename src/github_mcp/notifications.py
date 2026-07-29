@@ -14,7 +14,8 @@ from .summaries import _summarize_notification
 
 @mcp.tool()
 async def list_notifications(
-    all: bool = False, participating: bool = False, limit: int = 30
+    all: bool = False, participating: bool = False, limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the authenticated user's notifications across all repositories.
 
@@ -22,12 +23,16 @@ async def list_notifications(
     ones, or `participating=True` to limit to threads you're directly
     participating in. Each item's `id` is the thread id for
     `mark_notification_read`. Returns up to `limit` (max 50) notifications.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 50)
     async with _session() as gh:
         notifications = await gh.get(
             "/notifications",
-            params={"all": all, "participating": participating, "per_page": limit},
+            params={"all": all, "participating": participating, "per_page": limit, "page": page},
         )
     return [_summarize_notification(n) for n in notifications]
 

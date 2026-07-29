@@ -495,7 +495,8 @@ async def create_issues_for_alerts(
 
 @mcp.tool()
 async def list_secret_scanning_alerts(
-    owner: str, repo: str, state: str = "open", limit: int = 30
+    owner: str, repo: str, state: str = "open", limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List secret-scanning alerts for a repository (the Security tab).
 
@@ -503,38 +504,48 @@ async def list_secret_scanning_alerts(
     never returned — only the type, state, and resolution. Requires a token with
     access to security alerts (repo admin / `security_events`); GitHub returns
     403/404 otherwise. Returns up to `limit` (max 100) alerts.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         alerts = await gh.get(
             f"/repos/{owner}/{repo}/secret-scanning/alerts",
-            params={"state": state, "per_page": limit},
+            params={"state": state, "per_page": limit, "page": page},
         )
     return [_summarize_secret_alert(a) for a in alerts]
 
 
 @mcp.tool()
 async def list_code_scanning_alerts(
-    owner: str, repo: str, state: str = "open", limit: int = 30
+    owner: str, repo: str, state: str = "open", limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List code-scanning (CodeQL etc.) alerts for a repository.
 
     `state` is `open` (default), `dismissed`, `fixed`, or `all`. Returns each
     alert's rule, severity, and tool. Requires a token with access to security
     alerts. Returns up to `limit` (max 100) alerts.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         alerts = await gh.get(
             f"/repos/{owner}/{repo}/code-scanning/alerts",
-            params={"state": state, "per_page": limit},
+            params={"state": state, "per_page": limit, "page": page},
         )
     return [_summarize_code_scanning_alert(a) for a in alerts]
 
 
 @mcp.tool()
 async def list_dependabot_alerts(
-    owner: str, repo: str, state: str = "open", limit: int = 30
+    owner: str, repo: str, state: str = "open", limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List Dependabot (vulnerable-dependency) alerts for a repository.
 
@@ -542,11 +553,15 @@ async def list_dependabot_alerts(
     `all`. Returns the affected package, severity, and advisory summary. Requires
     a token with access to security alerts. Returns up to `limit` (max 100)
     alerts.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         alerts = await gh.get(
             f"/repos/{owner}/{repo}/dependabot/alerts",
-            params={"state": state, "per_page": limit},
+            params={"state": state, "per_page": limit, "page": page},
         )
     return [_summarize_dependabot_alert(a) for a in alerts]

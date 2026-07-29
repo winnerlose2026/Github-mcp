@@ -16,18 +16,23 @@ from .summaries import _summarize_comment, _summarize_commit, _summarize_issue
 
 @mcp.tool()
 async def list_milestones(
-    owner: str, repo: str, state: str = "open", limit: int = 30
+    owner: str, repo: str, state: str = "open", limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List a repository's milestones.
 
     `state` is `open`, `closed`, or `all`. Returns up to `limit` (max 100)
     milestones with their number, title, state, and open/closed issue counts.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         milestones = await gh.get(
             f"/repos/{owner}/{repo}/milestones",
-            params={"state": state, "per_page": limit},
+            params={"state": state, "per_page": limit, "page": page},
         )
     return [
         {
@@ -108,18 +113,23 @@ async def unlock_issue(
 
 @mcp.tool()
 async def list_pull_request_commits(
-    owner: str, repo: str, pull_number: int, limit: int = 50
+    owner: str, repo: str, pull_number: int, limit: int = 50,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the commits that make up a pull request.
 
     Returns up to `limit` (max 100) commits in the PR, each with its SHA,
     message, author, and date.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         commits = await gh.get(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/commits",
-            params={"per_page": limit},
+            params={"per_page": limit, "page": page},
         )
     return [_summarize_commit(c) for c in commits]
 
@@ -131,18 +141,23 @@ async def list_issues(
     state: str = "open",
     labels: str | None = None,
     limit: int = 20,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List issues in a repository.
 
     `state` is one of `open`, `closed`, or `all`. `labels` is an optional
     comma-separated list of label names to filter by. Note: GitHub's issues
     endpoint also returns pull requests; check `is_pull_request` on each item.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 50)
     async with _session() as gh:
         issues = await gh.get(
             f"/repos/{owner}/{repo}/issues",
-            params={"state": state, "labels": labels, "per_page": limit},
+            params={"state": state, "labels": labels, "per_page": limit, "page": page},
         )
     return [_summarize_issue(issue) for issue in issues]
 
@@ -247,19 +262,24 @@ async def add_issue_comment(
 
 @mcp.tool()
 async def list_issue_comments(
-    owner: str, repo: str, issue_number: int, limit: int = 30
+    owner: str, repo: str, issue_number: int, limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the conversation comments on an issue or pull request.
 
     These are the top-level timeline comments (not inline code-review comments —
     use `list_pull_request_review_comments` for those). Returns up to `limit`
     (max 100) comments.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         comments = await gh.get(
             f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
-            params={"per_page": limit},
+            params={"per_page": limit, "page": page},
         )
     return [_summarize_comment(c) for c in comments]
 
@@ -321,16 +341,20 @@ async def add_assignees(
 
 
 @mcp.tool()
-async def list_labels(owner: str, repo: str, limit: int = 50) -> list[dict[str, Any]]:
+async def list_labels(owner: str, repo: str, limit: int = 50, page: int = 1) -> list[dict[str, Any]]:
     """List the labels defined in a repository (gh label list).
 
     Returns each label's name, color (hex, no leading `#`), and description, up to
     `limit` (max 100).
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         labels = await gh.get(
-            f"/repos/{owner}/{repo}/labels", params={"per_page": limit}
+            f"/repos/{owner}/{repo}/labels", params={"per_page": limit, "page": page}
         )
     return [
         {

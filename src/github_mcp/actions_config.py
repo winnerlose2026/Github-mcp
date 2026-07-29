@@ -15,17 +15,22 @@ from .core import _clamp, _session, mcp
 
 @mcp.tool()
 async def list_repo_secrets(
-    owner: str, repo: str, limit: int = 30
+    owner: str, repo: str, limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the names of a repository's Actions secrets (values are never exposed).
 
     Returns each secret's name and created/updated timestamps. GitHub never
     returns secret values, so neither does this. Returns up to `limit` (max 100).
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         data = await gh.get(
-            f"/repos/{owner}/{repo}/actions/secrets", params={"per_page": limit}
+            f"/repos/{owner}/{repo}/actions/secrets", params={"per_page": limit, "page": page}
         )
     return [
         {
@@ -84,16 +89,21 @@ async def delete_repo_secret(
 
 @mcp.tool()
 async def list_repo_variables(
-    owner: str, repo: str, limit: int = 30
+    owner: str, repo: str, limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List a repository's Actions variables (name + value; these are not secret).
 
     Returns up to `limit` (max 100) variables with their values and timestamps.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         data = await gh.get(
-            f"/repos/{owner}/{repo}/actions/variables", params={"per_page": limit}
+            f"/repos/{owner}/{repo}/actions/variables", params={"per_page": limit, "page": page}
         )
     return [
         {
@@ -142,18 +152,23 @@ async def delete_repo_variable(owner: str, repo: str, name: str) -> dict[str, An
 
 @mcp.tool()
 async def list_run_artifacts(
-    owner: str, repo: str, run_id: int, limit: int = 30
+    owner: str, repo: str, run_id: int, limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the artifacts produced by a workflow run.
 
     Returns each artifact's id, name, size, expiry, and `archive_download_url`
     (a short-lived API URL for the zip). Returns up to `limit` (max 100).
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         data = await gh.get(
             f"/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
-            params={"per_page": limit},
+            params={"per_page": limit, "page": page},
         )
     return [
         {

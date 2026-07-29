@@ -15,17 +15,22 @@ from .summaries import _summarize_repo
 
 @mcp.tool()
 async def list_repository_collaborators(
-    owner: str, repo: str, limit: int = 30
+    owner: str, repo: str, limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List a repository's collaborators with their permission level.
 
     Returns up to `limit` (max 100) collaborators. Requires push (or higher)
     access to the repository.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         users = await gh.get(
-            f"/repos/{owner}/{repo}/collaborators", params={"per_page": limit}
+            f"/repos/{owner}/{repo}/collaborators", params={"per_page": limit, "page": page}
         )
     return [
         {
@@ -154,6 +159,7 @@ async def list_my_repositories(
     affiliation: str = "owner,collaborator,organization_member",
     sort: str = "updated",
     limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List repositories the authenticated user has access to.
 
@@ -161,12 +167,16 @@ async def list_my_repositories(
     `organization_member`. `sort` is one of `created`, `updated`, `pushed`,
     `full_name`. Returns up to `limit` (max 100) repositories. Use this to
     discover repos the token can reach without knowing their names.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         repos = await gh.get(
             "/user/repos",
-            params={"affiliation": affiliation, "sort": sort, "per_page": limit},
+            params={"affiliation": affiliation, "sort": sort, "per_page": limit, "page": page},
         )
     return [_summarize_repo(repo) for repo in repos]
 
@@ -218,12 +228,16 @@ async def get_repository_tree(
 
 
 @mcp.tool()
-async def list_branches(owner: str, repo: str, limit: int = 30) -> list[dict[str, Any]]:
-    """List branches in a repository, with the head commit SHA for each."""
+async def list_branches(owner: str, repo: str, limit: int = 30, page: int = 1) -> list[dict[str, Any]]:
+    """List branches in a repository, with the head commit SHA for each.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on."""
     limit = _clamp(limit, 100)
     async with _session() as gh:
         branches = await gh.get(
-            f"/repos/{owner}/{repo}/branches", params={"per_page": limit}
+            f"/repos/{owner}/{repo}/branches", params={"per_page": limit, "page": page}
         )
     return [
         {
@@ -339,6 +353,7 @@ async def find_reusable_repositories(
     public_only: bool = False,
     include_archived: bool = False,
     limit: int = 10,
+    page: int = 1,
 ) -> dict[str, Any]:
     """Find repositories you could reuse for something you're building.
 
@@ -365,6 +380,10 @@ async def find_reusable_repositories(
       (narrower nouns, add qualifiers) and call again — iterate until precise.
 
     Returns up to `limit` (max 50) candidates.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     if not query.strip():
         raise GitHubError(
@@ -390,7 +409,7 @@ async def find_reusable_repositories(
     async with _session() as gh:
         result = await gh.get(
             "/search/repositories",
-            params={"q": q, "sort": "stars", "order": "desc", "per_page": limit},
+            params={"q": q, "sort": "stars", "order": "desc", "per_page": limit, "page": page},
         )
     candidates = [
         {

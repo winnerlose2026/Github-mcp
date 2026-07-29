@@ -4,6 +4,36 @@ All notable changes to this project are documented here. Versions follow
 [Semantic Versioning](https://semver.org/); the project is pre-1.0, so minor
 bumps may add sizeable batches of tools.
 
+## [0.18.0] — 2026-07-29
+
+### Fixed
+- **List tools could only ever return the first 100 items.** Every paginated tool
+  sent `per_page` but no `page`, so a repository with 300 open issues silently
+  reported 100 of them — with nothing to indicate the answer was partial. All 34
+  paginated tools now take `page` (1-based, default 1), and each docstring says
+  how to tell there is more: getting exactly `limit` items means you should ask
+  for the next page.
+- Corrected two stale claims in `client.py`'s docstring: it advertised
+  "a tiny bit of pagination" (there was none) and pointed at
+  `github_mcp.server`, which 0.17.0 emptied.
+
+### Added
+- **Retry and backoff.** `Retry-After` and `x-ratelimit-reset` are honoured, with
+  exponential backoff plus jitter otherwise, capped at 60s. Throttled requests
+  (429, or a 403 that is really a rate limit) are retried for any method, since
+  GitHub rejected them without running them. Transient 5xx responses are retried
+  **for reads only** — replaying a `POST`/`PATCH`/`DELETE` that may already have
+  applied could double-create or double-delete. Tunable with
+  `GITHUB_MCP_MAX_RETRIES` (default 3, `0` disables).
+- **`GITHUB_MCP_TOOLS`** loads only the tool groups you name, e.g.
+  `issues,pulls,repos` — 33 tools instead of 122. Every session otherwise pays
+  the context cost of the full surface. An unknown group name is a hard error
+  rather than a silent no-op, because quietly exposing nothing looks like a
+  broken connector.
+
+Tool count is unchanged at 122; the 34 paginated tools gain an optional `page`
+argument and nothing else changes about their signatures.
+
 ## [0.17.0] — 2026-07-29
 
 ### Changed

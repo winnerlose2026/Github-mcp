@@ -13,11 +13,15 @@ from .summaries import _summarize_gist
 
 
 @mcp.tool()
-async def list_gists(limit: int = 30) -> list[dict[str, Any]]:
-    """List the authenticated user's gists, most recent first (gh gist list)."""
+async def list_gists(limit: int = 30, page: int = 1) -> list[dict[str, Any]]:
+    """List the authenticated user's gists, most recent first (gh gist list).
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on."""
     limit = _clamp(limit, 100)
     async with _session() as gh:
-        gists = await gh.get("/gists", params={"per_page": limit})
+        gists = await gh.get("/gists", params={"per_page": limit, "page": page})
     return [_summarize_gist(gist) for gist in gists]
 
 

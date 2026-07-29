@@ -15,18 +15,23 @@ from .summaries import _summarize_comment, _summarize_file, _summarize_pull, _su
 
 @mcp.tool()
 async def list_pull_requests(
-    owner: str, repo: str, state: str = "open", limit: int = 20
+    owner: str, repo: str, state: str = "open", limit: int = 20,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List pull requests in a repository.
 
     `state` is one of `open`, `closed`, or `all`. Returns up to `limit`
     (max 50) pull requests.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 50)
     async with _session() as gh:
         pulls = await gh.get(
             f"/repos/{owner}/{repo}/pulls",
-            params={"state": state, "per_page": limit},
+            params={"state": state, "per_page": limit, "page": page},
         )
     return [_summarize_pull(pull) for pull in pulls]
 
@@ -67,54 +72,69 @@ async def get_pull_request_diff(
 
 @mcp.tool()
 async def list_pull_request_files(
-    owner: str, repo: str, pull_number: int, limit: int = 50
+    owner: str, repo: str, pull_number: int, limit: int = 50,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the files changed in a pull request.
 
     Returns each file's path, status (added/modified/removed/renamed), and
     line counts. Returns up to `limit` (max 100) files.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         files = await gh.get(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/files",
-            params={"per_page": limit},
+            params={"per_page": limit, "page": page},
         )
     return [_summarize_file(f) for f in files]
 
 
 @mcp.tool()
 async def list_pull_request_reviews(
-    owner: str, repo: str, pull_number: int, limit: int = 30
+    owner: str, repo: str, pull_number: int, limit: int = 30,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List the reviews submitted on a pull request.
 
     Returns each review's author, `state` (e.g. `APPROVED`, `CHANGES_REQUESTED`,
     `COMMENTED`, `DISMISSED`), and body. Returns up to `limit` (max 100) reviews.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         reviews = await gh.get(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-            params={"per_page": limit},
+            params={"per_page": limit, "page": page},
         )
     return [_summarize_review(r) for r in reviews]
 
 
 @mcp.tool()
 async def list_pull_request_review_comments(
-    owner: str, repo: str, pull_number: int, limit: int = 50
+    owner: str, repo: str, pull_number: int, limit: int = 50,
+    page: int = 1,
 ) -> list[dict[str, Any]]:
     """List inline code-review comments on a pull request.
 
     These are comments anchored to specific files/lines in the diff (each
     includes `path` and `line`). Returns up to `limit` (max 100) comments.
+
+    Paginated: returns at most `limit` items from page `page` (1-based). If you
+    get exactly `limit` items there are probably more; request `page=2`, and so
+    on.
     """
     limit = _clamp(limit, 100)
     async with _session() as gh:
         comments = await gh.get(
             f"/repos/{owner}/{repo}/pulls/{pull_number}/comments",
-            params={"per_page": limit},
+            params={"per_page": limit, "page": page},
         )
     return [_summarize_comment(c) for c in comments]
 
