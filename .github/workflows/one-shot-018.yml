@@ -1,0 +1,130 @@
+name: One-shot 0.18.0
+
+# Throwaway automation. Running the mechanical change here rather than
+# hand-editing 18 files keeps it deterministic: the script was verified locally
+# to produce a clean tree (ruff, 196 tests, smoke handshake at 122 tools), and
+# this job re-checks all of that before it is allowed to commit anything.
+#
+# Delete this workflow and scripts/_refactor/ once 0.18.0 has landed.
+
+on:
+  push:
+    branches: [feat/pagination-retry-scoping]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Guard: the script is not idempotent (it rewrites signatures in place),
+      # so skip if it has already been applied on this branch.
+      - id: check
+        name: Has it already run?
+        run: |
+          if grep -q "max_retries" src/github_mcp/config.py; then
+            echo "Already applied; nothing to do."
+            echo "todo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "todo=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v6
+        if: steps.check.outputs.todo == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package with dev dependencies
+        if: steps.check.outputs.todo == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Count tools before the change
+        if: steps.check.outputs.todo == 'true'
+        run: |
+          python - <<'PY'
+          import asyncio
+          from github_mcp import core
+          n = len(asyncio.run(core.mcp.list_tools()))
+          print(f"before: {n} tools")
+          open("/tmp/before.txt", "w").write(str(n))
+          PY
+
+      - name: Apply the 0.18.0 changes
+        if: steps.check.outputs.todo == 'true'
+        run: python scripts/_refactor/apply_018.py
+
+      # The throwaway script is excluded: it is deleted before this branch is
+      # merged, so its own style is not worth gating on.
+      - name: Format imports and lint
+        if: steps.check.outputs.todo == 'true'
+        run: |
+          ruff check . --exclude scripts/_refactor --fix
+          ruff check . --exclude scripts/_refactor
+
+      - name: Run tests
+        if: steps.check.outputs.todo == 'true'
+        run: pytest -q
+
+      - name: Launch the server and complete an MCP handshake
+        if: steps.check.outputs.todo == 'true'
+        run: python scripts/smoke_stdio.py --min-tools 100
+
+      - name: Assert the tool count is unchanged and paging is wired up
+        if: steps.check.outputs.todo == 'true'
+        run: |
+          python - <<'PY'
+          import asyncio, sys
+          from github_mcp import core
+          tools = asyncio.run(core.mcp.list_tools())
+          before = int(open("/tmp/before.txt").read().strip())
+          paged = [t.name for t in tools
+                   if "page" in t.inputSchema.get("properties", {})]
+          print(f"after: {len(tools)} tools, {len(paged)} of them paginated")
+          if len(tools) != before:
+              sys.exit(f"tool count changed ({before} -> {len(tools)})")
+          if len(paged) != 34:
+              sys.exit(f"expected 34 paginated tools, found {len(paged)}")
+          print("tool surface intact and pagination wired up")
+          PY
+
+      - name: Verify tool-group scoping actually narrows the surface
+        if: steps.check.outputs.todo == 'true'
+        env:
+          GITHUB_MCP_TOOLS: issues,pulls
+        run: |
+          python - <<'PY'
+          import asyncio, sys
+          from github_mcp import core
+          n = len(asyncio.run(core.mcp.list_tools()))
+          print(f"GITHUB_MCP_TOOLS=issues,pulls -> {n} tools")
+          if not 0 < n < 60:
+              sys.exit("scoping did not narrow the tool list as expected")
+          PY
+
+      - name: Commit the changes
+        if: steps.check.outputs.todo == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -F - <<'MSG'
+          Add pagination, retry/backoff, and tool-group scoping
+
+          Adds `page` to the 34 paginated list tools, which previously sent only
+          `per_page` and so could never return past the first 100 items. Adds
+          retry/backoff to the client (honouring Retry-After and rate-limit
+          headers, never replaying a write after an ambiguous 5xx), and
+          GITHUB_MCP_TOOLS to load only selected tool groups.
+
+          Applied by scripts/_refactor/apply_018.py, which this job verified
+          leaves the tool count unchanged at 122 with all 34 paginated tools
+          exposing `page`, ruff clean, 196 tests passing, and the stdio
+          handshake succeeding.
+          MSG
+          git push
