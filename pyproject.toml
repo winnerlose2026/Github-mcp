@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "github-mcp-connector"
-version = "0.15.0"
+version = "0.16.0"
 description = "A Model Context Protocol (MCP) connector for GitHub, for use with Claude."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,9 +24,12 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "mcp>=1.2.0",
-    "httpx>=0.27",
-    "pynacl>=1.5",
+    # Upper bounds are deliberate: mcp 2.0 removed `mcp.server.fastmcp`,
+    # which this package imports, so an unbounded range breaks every fresh
+    # install. Revisit when porting to the standalone `fastmcp` package.
+    "mcp>=1.2.0,<2",
+    "httpx>=0.27,<1",
+    "pynacl>=1.5,<2",
 ]
 
 [project.urls]
@@ -38,6 +41,7 @@ Issues = "https://github.com/winnerlose2026/Github-mcp/issues"
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -52,3 +56,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+github_mcp = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]

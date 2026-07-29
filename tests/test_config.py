@@ -1,6 +1,5 @@
 """Tests for environment-driven configuration."""
 
-import importlib
 
 from github_mcp.config import Config
 

@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Runtime/dev Python deps. Upper bounds in pyproject are intentional, so
+  # Dependabot will open PRs proposing to widen them — that's the signal to
+  # review a major upgrade deliberately rather than discovering it in prod.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+
+  # Keep the workflow actions current (this is what surfaced the Node 20
+  # deprecation previously).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "ci"]

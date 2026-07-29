@@ -64,7 +64,7 @@ class GitHubClient:
             transport=transport,
         )
 
-    async def __aenter__(self) -> "GitHubClient":
+    async def __aenter__(self) -> GitHubClient:
         return self
 
     async def __aexit__(self, *exc: object) -> None:

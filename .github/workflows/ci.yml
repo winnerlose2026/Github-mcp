@@ -4,11 +4,37 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Nightly: dependency resolution happens fresh on every install, so an
+  # upstream breaking release (e.g. mcp 2.0 dropping `mcp.server.fastmcp`) can
+  # break users without a single commit here. Catch it on a schedule instead of
+  # waiting for a bug report.
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check .
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -31,5 +57,37 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Show resolved runtime deps
+        run: pip list
+
       - name: Run tests
         run: pytest -q
+
+  smoke:
+    name: Smoke (install from wheel, real stdio handshake)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Build and install the wheel (not an editable checkout) so packaging
+      # problems and dependency-resolution breakage both surface here.
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install the built wheel
+        shell: bash
+        run: pip install dist/*.whl
+
+      - name: Launch the server and complete an MCP handshake
+        run: python scripts/smoke_stdio.py --min-tools 100
