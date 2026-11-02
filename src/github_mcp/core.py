@@ -1,15 +1,18 @@
 """Shared foundation for every tool module.
 
-Holds the FastMCP instance, the resolved configuration, and the auth and
-session plumbing every tool runs through. Tool modules import from here;
-nothing here imports them, so there are no cycles.
+Holds the MCPServer instance (mcp 2.x's successor to FastMCP), the resolved
+configuration, and the auth and session plumbing every tool runs through.
+Tool modules import from here; nothing here imports them, so there are no
+cycles.
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from .client import GitHubClient, GitHubError
 from .config import Config
@@ -29,7 +32,14 @@ qualifiers (e.g. `repo:owner/name`, `is:open`, `label:bug`, `language:python`).
 """
 
 
-mcp = FastMCP("github", instructions=INSTRUCTIONS)
+try:
+    # Reported to clients as serverInfo.version in the initialize handshake, so
+    # you can tell which release a connector is actually running.
+    SERVER_VERSION = _dist_version("github-mcp-connector")
+except PackageNotFoundError:  # running from a source tree that isn't installed
+    SERVER_VERSION = "0+unknown"
+
+mcp = MCPServer("github", instructions=INSTRUCTIONS, version=SERVER_VERSION)
 
 
 def _require_token() -> None:

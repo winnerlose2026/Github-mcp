@@ -2,7 +2,7 @@
 
 Unit tests import the package in-process, which does *not* prove a client can
 actually start the server: a broken dependency resolution (e.g. the mcp 2.0
-release that removed ``mcp.server.fastmcp``) only shows up at launch. This
+release that renamed ``mcp.server.fastmcp``) only shows up at launch. This
 script speaks real JSON-RPC to ``python -m github_mcp`` the way Claude does,
 then checks the server initializes and lists a plausible number of tools.
 

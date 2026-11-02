@@ -22,6 +22,6 @@ for _group in TOOL_GROUPS:
     if _group in _selected:
         globals()[_group] = importlib.import_module(f".{_group}", __name__)
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 
 __all__ = ["__version__", "core", "summaries", *sorted(_selected)]

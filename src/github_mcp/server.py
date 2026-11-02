@@ -2,7 +2,7 @@
 
 The tools live in the domain modules imported by the package
 ``__init__``; this module only parses CLI arguments and starts the
-shared FastMCP instance::
+shared MCPServer instance::
 
     python -m github_mcp            # stdio (Claude Desktop/Code)
     python -m github_mcp --http     # streamable HTTP

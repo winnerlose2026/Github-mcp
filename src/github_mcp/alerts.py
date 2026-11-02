@@ -1,6 +1,6 @@
 """Security alerts: Dependabot, code scanning, and secret scanning.
 
-Tools register on the shared FastMCP instance from :mod:`github_mcp.core`;
+Tools register on the shared MCPServer instance from :mod:`github_mcp.core`;
 the package ``__init__`` imports this module to register them.
 """
 
