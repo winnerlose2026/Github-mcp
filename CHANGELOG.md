@@ -4,6 +4,36 @@ All notable changes to this project are documented here. Versions follow
 [Semantic Versioning](https://semver.org/); the project is pre-1.0, so minor
 bumps may add sizeable batches of tools.
 
+## [0.19.0] — 2026-11-02
+
+### Changed
+- **Ported to the mcp 2.x SDK** (closes #21). `core.py` now builds on
+  `mcp.server.mcpserver.MCPServer`, the renamed FastMCP, and the dependency moves
+  from `mcp>=1.2.0,<2` to `mcp>=2,<3`. mcp 1.x is security-fixes-only, so this
+  puts the connector back on the maintained line. The decorator API is
+  unchanged, so no tool module was touched.
+- **No change to what clients see.** The `tools/list` wire output was diffed
+  between mcp 1.30.0 and 2.3.0 for protocol versions 2024-11-05, 2025-06-18 and
+  2025-11-25: all 122 tools are byte-identical (names, descriptions, input and
+  output schemas). `tools/call` results (success, structured content, 404,
+  argument validation, unknown arguments, read-only refusals) also match exactly.
+  Verified against mcp 2.0.0 too, the oldest release the new range allows.
+
+### Fixed
+- **Error messages would have been hidden under mcp 2.x.** The new SDK treats
+  any exception escaping a tool as a crash and replaces its text with a bare
+  `Error executing tool <name>`, so the model would no longer have learned *why*
+  a call failed (a 404, a missing permission, read-only mode). `GitHubError` now
+  subclasses the SDK's `ToolError`, which marks it as an anticipated failure, so
+  the full message still reaches the model. It keeps `RuntimeError` as a base,
+  so existing `except RuntimeError` handlers are unaffected. Guarded by the new
+  `tests/test_sdk_integration.py`.
+
+### Added
+- The `initialize` handshake now reports the connector's own release as
+  `serverInfo.version` (it previously echoed the SDK version under 1.x, and would
+  have been empty under 2.x), so you can tell which release a client is running.
+
 ## [0.18.0] — 2026-07-29
 
 ### Fixed

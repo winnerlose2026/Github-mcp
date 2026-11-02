@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 import httpx
+from mcp.server.mcpserver.exceptions import ToolError
 
 from .config import Config
 
@@ -71,12 +72,19 @@ def _retry_delay(response: httpx.Response, attempt: int) -> float:
     return min(2.0**attempt + random.uniform(0, 0.5), _MAX_BACKOFF_SECONDS)
 
 
-class GitHubError(RuntimeError):
+class GitHubError(ToolError, RuntimeError):
     """Raised when the GitHub API returns an error response.
 
     The message is formatted to be useful when surfaced back to an LLM: it
     includes the HTTP status, the requested method/path, and GitHub's own
     error message when one is available.
+
+    It subclasses the SDK's ``ToolError`` because mcp 2.x treats any other
+    exception escaping a tool as a crash and replaces its text with a bare
+    ``Error executing tool <name>``. A ``ToolError`` is an anticipated failure,
+    so the model still sees *why* the call failed (404, read-only mode, a
+    validation problem) and can correct course. ``RuntimeError`` stays in the
+    bases so existing ``except RuntimeError`` handlers keep working.
     """
 
     def __init__(self, status_code: int, method: str, url: str, detail: str) -> None:

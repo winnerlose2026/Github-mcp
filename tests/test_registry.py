@@ -35,7 +35,7 @@ async def test_every_tool_has_a_description(tools):
 
 
 async def test_every_tool_has_an_input_schema(tools):
-    bad = [t.name for t in tools if not isinstance(t.inputSchema, dict)]
+    bad = [t.name for t in tools if not isinstance(t.input_schema, dict)]
     assert not bad, f"tools with no input schema: {bad}"
 
 
